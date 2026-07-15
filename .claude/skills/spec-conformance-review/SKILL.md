@@ -1,6 +1,6 @@
 ---
 name: spec-conformance-review
-description: otel-windows-handoff への PR(主に Codex 実装)を仕様 Issue の受け入れ条件と突合してレビューする。禁止事項スキャン・OTel 計装設計・再現性・WinUI 未検証前提の観点を含む。PR レビュー時に使う。
+description: otel-windows-handoff への PR(主に Codex 実装)を仕様 Issue の受け入れ条件と突合してレビューする。禁止事項スキャン・OTel 計装設計・再現性・WinUI ビルド検証の自己申告確認の観点を含む。PR レビュー時に使う。
 ---
 
 # Spec Conformance Review
@@ -41,15 +41,15 @@ otel-windows-handoff への PR のレビュー。特に Codex 実装 PR(spike Po
 
 - README の手順がコマンドコピペで通る粒度か
 - バージョン固定表が差分の依存変更と一致しているか
-- Linux で `Pipeline.Core` + `App.Console` + Tests がビルド・テスト可能か(CI の linux ジョブ結果を確認)
+- プラットフォーム中立の維持: `Pipeline.Core` + `App.Console` + Tests に Windows 専用 API が混入していないか(CI の linux ジョブ結果を確認)
 
 ### 5. WinUI(src/App.WinUI)の扱い
 
-「Linux ビルド未検証」前提で届く。静的に分かる問題のみ指摘する:
+Codex はローカル(Windows)実行のため、ビルド・テスト検証済みで届く前提(PR の自己申告を確認。未検証なら指摘)。レビューでは:
 
 - ビジネスロジックの WinUI 側への混入(Core 呼び出しと UI 状態管理以外があれば指摘)
-- 明白な API 誤用・XAML と code-behind の不整合
-- 動作確認の要求はしない(著者実機検証 zenn-content#50 の領分)
+- API 誤用・XAML と code-behind の不整合
+- 実行時の動作保証までは求めない(起動・UI 操作・OTLP 送信の確認は著者実機検証 zenn-content#50 の領分)
 
 ## 出力
 

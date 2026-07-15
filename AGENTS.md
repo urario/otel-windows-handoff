@@ -29,9 +29,9 @@ collector/                # otelcol-contrib 設定
 
 ## 検証範囲(重要)
 
-- あなたの実行環境は Linux。**`Pipeline.Core` + `App.Console` + Tests のビルド・テスト通過(`dotnet build` / `dotnet test`)までがあなたの検証責任**
-- `src/App.WinUI` は Linux でビルド検証できない。ベストエフォートで書き、CI の windows ジョブと著者の実機検証に委ねる
-- Windows 専用 API を `Pipeline.Core` / Tests に持ち込まない(Linux でのビルド・テストを壊さない)
+- あなたはローカル(Windows)で実行される。**`src/App.WinUI` を含む全プロジェクトのビルドと、Tests の全テスト通過(`dotnet build` / `dotnet test`)があなたの検証責任**。WinUI のビルドエラーを残したまま PR を出さない
+- アプリの実行確認(起動・UI 操作・OTLP 送信の到達)は著者の担当。あなたはビルド・テスト通過までを保証する
+- `Pipeline.Core` / `App.Console` / Tests のプラットフォーム中立は維持する(Windows 専用 API を持ち込まない)。CI の linux ジョブが通ることが受け入れ条件に含まれる
 
 ## 禁止事項
 
