@@ -49,6 +49,6 @@ internal static class Program
 
         await Task.Delay(TimeSpan.FromMilliseconds(100 + ((jobId - 1) * 50)));
 
-        HandoffEventSource.Log.JobCompleted(Activity.Current.TraceId.ToString(), jobId);
+        HandoffEventSource.Log.JobCompleted(activity.TraceId.ToString(), jobId);
     }
 }
