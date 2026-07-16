@@ -16,6 +16,14 @@ internal static class Program
             .AddConsoleExporter()
             .Build();
 
+        // EventSourceを先に初期化し、WPRから有効化されるまで最大5秒待つ。
+        for (int attempt = 0;
+             attempt < 50 && !HandoffEventSource.Log.IsEnabled();
+             attempt++)
+        {
+            await Task.Delay(100);
+        }
+
         try
         {
             for (int jobId = 1; jobId <= 5; jobId++)
