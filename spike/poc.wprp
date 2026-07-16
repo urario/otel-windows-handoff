@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0">
+  <Profiles>
+    <EventCollector Id="OtelEtwSpikeEventCollector" Name="OtelEtwSpike Event Collector">
+      <BufferSize Value="64" />
+      <Buffers Value="4" />
+    </EventCollector>
+
+    <EventProvider
+      Id="OtelEtwSpikeHandoffProvider"
+      Name="*OtelEtwSpike-Handoff"
+      Level="5" />
+
+    <Profile
+      Id="OtelEtwSpike.Light.File"
+      Name="OtelEtwSpike"
+      Description="OtelEtwSpike の引き継ぎイベントのみを記録する"
+      LoggingMode="File"
+      DetailLevel="Light">
+      <Collectors>
+        <EventCollectorId Value="OtelEtwSpikeEventCollector">
+          <EventProviders>
+            <EventProviderId Value="OtelEtwSpikeHandoffProvider" />
+          </EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>
