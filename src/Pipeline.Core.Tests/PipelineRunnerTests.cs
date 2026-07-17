@@ -120,6 +120,7 @@ public sealed class PipelineRunnerTests
 
     private sealed class TestWorkspace : IDisposable
     {
+        /// <summary>テストごとに独立した一時入力フォルダーを作成します。</summary>
         public TestWorkspace()
         {
             Root = Path.Combine(Path.GetTempPath(), $"otel-pipeline-tests-{Guid.NewGuid():N}");
@@ -128,12 +129,18 @@ public sealed class PipelineRunnerTests
             Directory.CreateDirectory(InputDirectory);
         }
 
+        /// <summary>このテストだけが使用する一時フォルダーを取得します。</summary>
         public string Root { get; }
 
+        /// <summary>テスト入力ファイルを配置するフォルダーを取得します。</summary>
         public string InputDirectory { get; }
 
+        /// <summary>パイプラインの出力先フォルダーを取得します。</summary>
         public string OutputDirectory { get; }
 
+        /// <summary>ファイル名順を検証できる小さな入力ファイルを生成します。</summary>
+        /// <param name="count">生成するファイル数。</param>
+        /// <returns>全入力ファイルの書き込み完了を表すタスク。</returns>
         public async Task WriteInputsAsync(int count)
         {
             byte[] data = Enumerable.Range(0, 16 * 1024).Select(index => (byte)index).ToArray();
@@ -143,6 +150,8 @@ public sealed class PipelineRunnerTests
             }
         }
 
+        /// <summary>長い待機と不要な CPU 負荷を除いたテスト用設定を作成します。</summary>
+        /// <returns>このワークスペースを入出力先にした設定。</returns>
         public PipelineOptions CreateOptions()
         {
             return new PipelineOptions
@@ -154,6 +163,7 @@ public sealed class PipelineRunnerTests
             };
         }
 
+        /// <summary>テストで生成した一時ファイルを再帰的に削除します。</summary>
         public void Dispose()
         {
             if (Directory.Exists(Root))

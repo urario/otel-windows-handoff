@@ -14,8 +14,10 @@ public sealed class PipelineRunner
 
     /// <summary>パイプラインを作成します。</summary>
     /// <param name="logger">フェーズ境界、再試行、失敗を記録する Logger。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="logger"/> が <see langword="null"/> です。</exception>
     public PipelineRunner(ILogger<PipelineRunner> logger)
     {
+        ArgumentNullException.ThrowIfNull(logger);
         this.logger = logger;
     }
 
@@ -28,11 +30,17 @@ public sealed class PipelineRunner
     /// 障害対象は実行開始順ではなく、名前順で決めたジョブ ID から選びます。
     /// スレッドのスケジュール順を使うと実行ごとに対象が変わるためです。
     /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> が <see langword="null"/> です。</exception>
+    /// <exception cref="ArgumentException">入力フォルダーまたは出力フォルダーの指定が空です。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">並列度、障害対象間隔、再試行回数、変換回数のいずれかが範囲外です。</exception>
+    /// <exception cref="DirectoryNotFoundException"><see cref="PipelineOptions.InputDirectory"/> が存在しません。</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> により処理が中止されました。</exception>
     public async Task<PipelineResult> RunAsync(
         PipelineOptions options,
         IProgress<PipelineProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(options);
         options.Validate();
 
         if (!Directory.Exists(options.InputDirectory))

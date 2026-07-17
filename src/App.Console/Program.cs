@@ -5,6 +5,9 @@ namespace OtelWindowsHandoff.ConsoleApp;
 
 internal static class Program
 {
+    /// <summary>コマンドラインを解析し、パイプライン実行またはテストデータ生成を開始します。</summary>
+    /// <param name="args">実行ファイル名を除いたコマンドライン引数。</param>
+    /// <returns>処理結果を表す終了コード。</returns>
     public static async Task<int> Main(string[] args)
     {
         if (args.Length == 0 || args[0] is "-h" or "--help")
@@ -139,6 +142,10 @@ internal sealed class CliArguments
         this.values = values;
     }
 
+    /// <summary>オプション名と値が交互に並ぶ引数を解析します。</summary>
+    /// <param name="args">コマンド名を除いた引数。</param>
+    /// <returns>名前から値を参照できる解析結果。</returns>
+    /// <exception cref="ArgumentException">不明な形式、値の欠落、同じオプションの重複を検出しました。</exception>
     public static CliArguments Parse(string[] args)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -163,16 +170,29 @@ internal sealed class CliArguments
         return new CliArguments(values);
     }
 
+    /// <summary>必須オプションの値を取得します。</summary>
+    /// <param name="name">先頭の <c>--</c> を含むオプション名。</param>
+    /// <returns>指定されたオプションの値。</returns>
+    /// <exception cref="ArgumentException">指定されたオプションがありません。</exception>
     public string Required(string name)
     {
         return Value(name) ?? throw new ArgumentException($"必須引数がありません: {name}");
     }
 
+    /// <summary>任意オプションの値を取得します。</summary>
+    /// <param name="name">先頭の <c>--</c> を含むオプション名。</param>
+    /// <returns>指定された値。オプションがない場合は <see langword="null"/>。</returns>
     public string? Value(string name)
     {
         return values.GetValueOrDefault(name);
     }
 
+    /// <summary>整数オプションを範囲検証して取得します。</summary>
+    /// <param name="name">先頭の <c>--</c> を含むオプション名。</param>
+    /// <param name="defaultValue">オプションがない場合に返す値。</param>
+    /// <param name="minimum">許容する最小値。</param>
+    /// <returns>解析済みの整数、または <paramref name="defaultValue"/>。</returns>
+    /// <exception cref="ArgumentException">値が整数ではないか、<paramref name="minimum"/> 未満です。</exception>
     public int Integer(string name, int defaultValue, int minimum)
     {
         string? value = Value(name);

@@ -170,6 +170,10 @@ public sealed partial class MainWindow : Window
         int Parallelism,
         int FlushTimeoutMilliseconds)
     {
+        /// <summary>WinUI の自動実行と画面初期値に使う起動引数を解析します。</summary>
+        /// <param name="args">実行ファイル名を除いたコマンドライン引数。</param>
+        /// <returns>既定値を補完した起動設定。</returns>
+        /// <exception cref="ArgumentException">不明な引数、値の欠落、範囲外の数値を検出しました。</exception>
         public static WindowArguments Parse(string[] args)
         {
             bool autoRun = false;
