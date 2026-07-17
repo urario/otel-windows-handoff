@@ -3,4 +3,5 @@
 *.etl
 artifacts/
 data/
+results/
 .vs/
