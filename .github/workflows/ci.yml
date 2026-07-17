@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore platform-neutral projects
+        run: dotnet restore ./OtelWindowsHandoff.Linux.slnf
+      - name: Build platform-neutral projects
+        run: dotnet build ./OtelWindowsHandoff.Linux.slnf --configuration Release --no-restore
+      - name: Test Pipeline.Core
+        run: dotnet test ./src/Pipeline.Core.Tests/Pipeline.Core.Tests.csproj --configuration Release --no-build
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build all projects including WinUI
+        run: dotnet build .\OtelWindowsHandoff.sln --configuration Release

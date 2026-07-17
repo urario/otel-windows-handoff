@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0">
+  <Profiles>
+    <EventCollector Id="HandoffEventCollector" Name="OTel Handoff Event Collector">
+      <BufferSize Value="64" />
+      <Buffers Value="4" />
+    </EventCollector>
+
+    <EventProvider
+      Id="HandoffProvider"
+      Name="*OtelWindowsHandoff-Handoff"
+      Level="5" />
+
+    <Profile
+      Id="OtelWindowsHandoff.Light.File"
+      Name="OtelWindowsHandoff"
+      Description="OpenTelemetry と ETW の引き継ぎイベントを記録する"
+      LoggingMode="File"
+      DetailLevel="Light">
+      <Collectors>
+        <EventCollectorId Value="HandoffEventCollector">
+          <EventProviders>
+            <EventProviderId Value="HandoffProvider" />
+          </EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>
