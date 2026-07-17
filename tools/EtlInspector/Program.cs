@@ -1,14 +1,15 @@
 using Microsoft.Diagnostics.Tracing;
 
-const string ProviderName = "OtelEtwSpike-Handoff";
+const string DefaultProviderName = "OtelWindowsHandoff-Handoff";
 
-if (args.Length != 1)
+if (args.Length is not 1 and not 3 || (args.Length == 3 && args[1] != "--provider"))
 {
-    Console.Error.WriteLine("使用方法: EtlInspector <ETLファイルのパス>");
+    Console.Error.WriteLine("使用方法: EtlInspector <ETLファイルのパス> [--provider <プロバイダー名>]");
     return 1;
 }
 
 string etlPath = Path.GetFullPath(args[0]);
+string providerName = args.Length == 3 ? args[2] : DefaultProviderName;
 if (!File.Exists(etlPath))
 {
     Console.Error.WriteLine($"ETLファイルが見つかりません: {etlPath}");
@@ -21,7 +22,7 @@ int completedCount = 0;
 
 source.Dynamic.All += data =>
 {
-    if (!string.Equals(data.ProviderName, ProviderName, StringComparison.Ordinal))
+    if (!string.Equals(data.ProviderName, providerName, StringComparison.Ordinal))
     {
         return;
     }

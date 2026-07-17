@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "OtelWindowsHandoff.sln",
+    "projects": [
+      "src/App.Console/App.Console.csproj",
+      "src/Pipeline.Core.Tests/Pipeline.Core.Tests.csproj",
+      "src/Pipeline.Core/Pipeline.Core.csproj"
+    ]
+  }
+}

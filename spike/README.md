@@ -10,8 +10,8 @@
 |---|---:|---|
 | .NET SDK | 10.0.100 以上の 10.0 feature band | `global.json` の `10.0.100` と `rollForward: latestFeature` |
 | Target Framework | `net10.0` | `OtelEtwSpike.csproj` |
-| OpenTelemetry | `1.16.0` | `OtelEtwSpike.csproj` |
-| OpenTelemetry.Exporter.Console | `1.16.0` | `OtelEtwSpike.csproj` |
+| OpenTelemetry | `1.17.0` | `Directory.Packages.props` |
+| OpenTelemetry.Exporter.Console | `1.17.0` | `Directory.Packages.props` |
 
 `global.json` は .NET 10 SDK のメジャーを固定し、インストール済みの最新 10.0 feature band を選ぶ。プレビュー SDK は選ばない。
 

@@ -2,3 +2,5 @@
 **/obj/
 *.etl
 artifacts/
+data/
+.vs/

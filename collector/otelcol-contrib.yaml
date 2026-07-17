@@ -1,0 +1,51 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: localhost:4317
+
+  windowsperfcounters:
+    collection_interval: 10s
+    perfcounters:
+      - object: Memory
+        counters:
+          - name: Available MBytes
+      - object: LogicalDisk
+        instances:
+          - _Total
+        counters:
+          - name: Avg. Disk sec/Read
+
+  # Alpha コンポーネントのため既定では有効にしない。
+  # windowseventlog:
+  #   channel: Application
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/aspire:
+    endpoint: localhost:4318
+    tls:
+      insecure: true
+  file:
+    path: artifacts/otel/telemetry.json
+    rotation:
+      max_megabytes: 100
+      max_days: 7
+      max_backups: 3
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/aspire, file]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/aspire, file]
+    metrics:
+      receivers: [otlp, windowsperfcounters]
+      processors: [batch]
+      exporters: [otlp/aspire, file]
