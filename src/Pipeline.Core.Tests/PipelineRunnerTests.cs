@@ -81,6 +81,41 @@ public sealed class PipelineRunnerTests
         Assert.False(File.Exists(Path.Combine(workspace.OutputDirectory, "input-002.bin")));
     }
 
+    /// <summary>障害注入以外の保存時アクセス拒否でも、実際の再試行回数を結果と Span に残すことを検証します。</summary>
+    /// <returns>非同期テストの完了を表すタスク。</returns>
+    [Fact]
+    public async Task RealSaveAccessDeniedReportsActualRetryCount()
+    {
+        using var workspace = new TestWorkspace();
+        await workspace.WriteInputsAsync(1);
+
+        // ACL は OS ごとに挙動が異なるため、出力ファイルと同名のディレクトリで移植可能なアクセス拒否を起こします。
+        Directory.CreateDirectory(Path.Combine(workspace.OutputDirectory, "input-001.bin"));
+        var stopped = new ConcurrentBag<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineInstrumentation.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Add,
+        };
+        ActivitySource.AddActivityListener(listener);
+        var runner = new PipelineRunner(NullLogger<PipelineRunner>.Instance);
+        PipelineOptions options = workspace.CreateOptions() with
+        {
+            FaultMode = FaultMode.None,
+            MaxSaveRetries = 2,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+        };
+
+        PipelineResult result = await runner.RunAsync(options);
+
+        JobResult failed = Assert.Single(result.Jobs);
+        Assert.False(failed.Succeeded);
+        Assert.Equal(2, failed.RetryCount);
+        Activity root = Assert.Single(stopped, activity => activity.DisplayName == "ProcessJob");
+        Assert.Equal(2, root.GetTagItem("retry.count"));
+    }
+
     /// <summary>ジョブ Span と三つのフェーズ Span の親子関係、安全なタグ値を検証します。</summary>
     /// <returns>非同期テストの完了を表すタスク。</returns>
     [Fact]

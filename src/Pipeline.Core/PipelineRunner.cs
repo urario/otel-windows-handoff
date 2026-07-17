@@ -107,7 +107,9 @@ public sealed class PipelineRunner
         string fileName = Path.GetFileName(job.Path);
         long fileSize = new FileInfo(job.Path).Length;
         Stopwatch stopwatch = Stopwatch.StartNew();
-        int retryCount = 0;
+
+        // 障害設定からの逆算では実環境のアクセス拒否を数えられないため、保存処理の実測値を結果と Span で共有します。
+        var saveRetryState = new SaveRetryState();
         string? errorMessage = null;
         bool succeeded = false;
 
@@ -128,7 +130,7 @@ public sealed class PipelineRunner
         {
             byte[] bytes = await LoadAsync(job, fileName, options, cancellationToken);
             Transform(job, fileName, bytes, options);
-            retryCount = await SaveAsync(job, fileName, bytes, options, activity, cancellationToken);
+            await SaveAsync(job, fileName, bytes, options, activity, saveRetryState, cancellationToken);
             succeeded = true;
             PipelineInstrumentation.JobsCompleted.Add(1);
         }
@@ -140,9 +142,6 @@ public sealed class PipelineRunner
         catch (Exception exception)
         {
             errorMessage = exception.Message;
-            retryCount = options.FaultMode.HasFlag(FaultMode.AccessDenied) && IsFaultTarget(job.Id, options)
-                ? options.MaxSaveRetries
-                : retryCount;
             activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
             activity?.AddException(exception);
             PipelineInstrumentation.JobsFailed.Add(1);
@@ -151,12 +150,12 @@ public sealed class PipelineRunner
         finally
         {
             stopwatch.Stop();
-            activity?.SetTag("retry.count", retryCount);
+            activity?.SetTag("retry.count", saveRetryState.Count);
             PipelineInstrumentation.JobDuration.Record(stopwatch.Elapsed.TotalMilliseconds);
             HandoffEventSource.Log.JobCompleted(traceId.ToString(), job.Id);
         }
 
-        return new JobResult(job.Id, fileName, succeeded, retryCount, stopwatch.Elapsed, errorMessage);
+        return new JobResult(job.Id, fileName, succeeded, saveRetryState.Count, stopwatch.Elapsed, errorMessage);
     }
 
     private async Task<byte[]> LoadAsync(
@@ -196,17 +195,17 @@ public sealed class PipelineRunner
         logger.LogInformation("フェーズ終了 phase=transform job.id={JobId} file.name={FileName}", job.Id, fileName);
     }
 
-    private async Task<int> SaveAsync(
+    private async Task SaveAsync(
         Job job,
         string fileName,
         byte[] bytes,
         PipelineOptions options,
         Activity? jobActivity,
+        SaveRetryState retryState,
         CancellationToken cancellationToken)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("save");
         logger.LogInformation("フェーズ開始 phase=save job.id={JobId} file.name={FileName}", job.Id, fileName);
-        int retries = 0;
 
         while (true)
         {
@@ -219,37 +218,37 @@ public sealed class PipelineRunner
 
                 string outputPath = Path.Combine(options.OutputDirectory, fileName);
                 await File.WriteAllBytesAsync(outputPath, bytes, cancellationToken);
-                activity?.SetTag("retry.count", retries);
-                jobActivity?.SetTag("retry.count", retries);
+                activity?.SetTag("retry.count", retryState.Count);
+                jobActivity?.SetTag("retry.count", retryState.Count);
                 logger.LogInformation(
                     "フェーズ終了 phase=save job.id={JobId} file.name={FileName} retry.count={RetryCount}",
                     job.Id,
                     fileName,
-                    retries);
-                return retries;
+                    retryState.Count);
+                return;
             }
-            catch (UnauthorizedAccessException exception) when (retries < options.MaxSaveRetries)
+            catch (UnauthorizedAccessException exception) when (retryState.Count < options.MaxSaveRetries)
             {
                 activity?.AddException(exception);
-                retries++;
+                retryState.Count++;
                 PipelineInstrumentation.RetriesTotal.Add(1);
                 TimeSpan delay = TimeSpan.FromMilliseconds(
-                    options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retries - 1));
+                    options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retryState.Count - 1));
                 logger.LogWarning(
                     exception,
                     "save を再試行 job.id={JobId} file.name={FileName} retry.count={RetryCount} delay_ms={DelayMilliseconds}",
                     job.Id,
                     fileName,
-                    retries,
+                    retryState.Count,
                     delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
             }
             catch (Exception exception)
             {
-                activity?.SetTag("retry.count", retries);
+                activity?.SetTag("retry.count", retryState.Count);
                 activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
                 activity?.AddException(exception);
-                jobActivity?.SetTag("retry.count", retries);
+                jobActivity?.SetTag("retry.count", retryState.Count);
                 throw;
             }
         }
@@ -261,4 +260,10 @@ public sealed class PipelineRunner
     }
 
     private sealed record Job(int Id, string Path);
+
+    private sealed class SaveRetryState
+    {
+        /// <summary>保存処理が実際に行った再試行回数を取得または設定します。</summary>
+        public int Count { get; set; }
+    }
 }
