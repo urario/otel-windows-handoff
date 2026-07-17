@@ -1,0 +1,55 @@
+# PR 自動レビュー(E02: urario/zenn-content#54)
+#
+# Codex 実装 PR への一次レビュー。レビュー観点は .claude/skills/spec-conformance-review に従う。
+# 起動条件(すべて必須):
+#   - PR 作成者がリポジトリオーナー本人(公開リポジトリのため第三者の PR では起動させない)
+#   - fork からの PR ではない(secrets 保護)
+#   - draft ではない
+name: Claude Auto Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  review:
+    if: |
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            この PR をレビューし、結果を 1 件の PR コメントとして投稿してください。
+            レビュー手順はリポジトリ内の .claude/skills/spec-conformance-review/SKILL.md に従うこと。要点:
+
+            1. 受け入れ条件の突合: PR 説明に転記された対応仕様 Issue(urario/zenn-content 側)の
+               受け入れ条件チェックリストと差分を 1 対 1 で突合し、自己申告の妥当性を確認する。
+               転記がなければまずそれを指摘する
+            2. 禁止事項スキャン(ブロッキング): 秘密情報・API キー・個人名・マシン名・
+               実在の社名/製品名・フルパスのハードコード・バイナリコミット
+            3. OTel 計装設計: `--otel off|sdk|otlp` 3 モードの正確性(off は Provider 非構築、
+               sdk は Exporter 未登録。E3 測定条件そのもの)、ForceFlush/Shutdown と所要時間出力、
+               Span タグのカーディナリティ、障害注入の決定性
+            4. 再現性: README の手順がコマンドコピペで通る粒度か、バージョン固定表と依存変更の整合
+            5. src/App.WinUI は「ビルド検証済み・実行未確認」前提。動作保証を求めず、
+               ビジネスロジック混入・API 誤用・XAML 不整合のみ指摘する
+
+            報告は「ブロッキング(禁止事項違反・受け入れ条件未達)」と「提案」を分け、
+            受け入れ条件の突合結果を表(条件 / 差分上の根拠 / 判定)で示すこと。日本語で書くこと。
