@@ -1,5 +1,8 @@
 # otel-windows-handoff
 
+[![CI](https://github.com/urario/otel-windows-handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/urario/otel-windows-handoff/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Windows デスクトップアプリの障害解析で、OpenTelemetry の Trace / Log / Metrics と ETW をどこまで接続できるか再現するサンプルです。画像処理を模したジョブは `load` → `transform` → `save` の3フェーズで動き、10件ごとの同じジョブへ遅延または保存失敗を注入できます。
 
 > `AGENTS.md` / `CLAUDE.md` / `.claude/` は開発体制用です。実験の再現にはこの README だけを使います。
