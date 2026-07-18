@@ -2,6 +2,8 @@
   "solution": {
     "path": "OtelWindowsHandoff.sln",
     "projects": [
+      "samples/legacy-log-correlation/LegacyLogCorrelation.Tests/LegacyLogCorrelation.Tests.csproj",
+      "samples/legacy-log-correlation/LegacyLogCorrelation/LegacyLogCorrelation.csproj",
       "src/App.Console/App.Console.csproj",
       "src/Pipeline.Core.Tests/Pipeline.Core.Tests.csproj",
       "src/Pipeline.Core/Pipeline.Core.csproj"
