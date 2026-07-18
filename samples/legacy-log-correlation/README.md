@@ -1,6 +1,6 @@
 # 既存ログライブラリと trace_id の相関
 
-既存アプリへ OpenTelemetry を段階導入するときに、現在のログライブラリへ `Activity.Current.TraceId` を渡す最小サンプルです。メインアプリや `Pipeline.Core` は log4net / NLog を参照しません。
+既存アプリへ OpenTelemetry を段階導入するときに、開始した `Activity` の `TraceId`(実運用では `Activity.Current?.TraceId` に相当)を現在のログライブラリへ渡す最小サンプルです。メインアプリや `Pipeline.Core` は log4net / NLog を参照しません。
 
 ## 実行
 
