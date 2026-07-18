@@ -16,6 +16,7 @@ Windows デスクトップアプリの障害解析で、OpenTelemetry の Trace 
 | `src/App.Console` | E3 自動測定と WinUI 後退時に使う CLI |
 | `src/App.WinUI` | Core の設定と進捗だけを扱う unpackaged WinUI 3 シェル |
 | `collector` | otelcol-contrib 設定と WPR プロファイル |
+| `scripts` | E2 の WPR / Dump 取得と E3 の4条件測定を補助する PowerShell スクリプト（[使い方](scripts/README.md)） |
 | `tools/EtlInspector` | WPA の表示状態に依存せず ETL ペイロードを読む補助 CLI |
 
 `OtelWindowsHandoff.sln` は Windows で WinUI を含む全体をビルドします。Linux CI は `OtelWindowsHandoff.Linux.slnf` を使い、Core / Console / Tests だけをビルドします。
