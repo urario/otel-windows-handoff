@@ -91,6 +91,8 @@ public static class LegacyLogCorrelationDemo
 
     private static Activity StartActivity(string operationName)
     {
+        // SDK 非依存のサンプルでも必ず Activity を開始できるよう、ここでは低レベル API を使います。
+        // OTel 計装済みの実アプリでは ActivitySource.StartActivity() と Activity.Current を使います。
         return new Activity(operationName)
             .SetIdFormat(ActivityIdFormat.W3C)
             .Start();
