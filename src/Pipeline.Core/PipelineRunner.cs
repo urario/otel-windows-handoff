@@ -110,9 +110,7 @@ public sealed partial class PipelineRunner
                     job,
                     duration: result.Duration,
                     retryCount: result.RetryCount,
-                    traceId: result.TraceId,
-                    spanId: result.SpanId,
-                    startedAt: result.StartedAt,
+                    telemetry: new JobTelemetryContext(result.TraceId, result.SpanId, result.StartedAt),
                     errorMessage: result.ErrorMessage);
             });
 
@@ -146,6 +144,7 @@ public sealed partial class PipelineRunner
         DateTimeOffset startedAt = activity is null
             ? DateTimeOffset.UtcNow
             : new DateTimeOffset(activity.StartTimeUtc, TimeSpan.Zero);
+        var telemetry = new JobTelemetryContext(traceIdText, spanIdText, startedAt);
 
         ReportProgress(
             progress,
@@ -154,9 +153,7 @@ public sealed partial class PipelineRunner
             counters,
             total,
             job,
-            traceId: traceIdText,
-            spanId: spanIdText,
-            startedAt: startedAt);
+            telemetry: telemetry);
 
         HandoffEventSource.Log.JobStarted(traceIdText, spanIdText, job.Id);
         string handoff =
@@ -172,9 +169,7 @@ public sealed partial class PipelineRunner
                 progress,
                 counters,
                 total,
-                traceIdText,
-                spanIdText,
-                startedAt,
+                telemetry,
                 () => LoadAsync(job, options, cancellationToken),
                 duration => loadDuration = duration,
                 () => saveRetryState.Count);
@@ -185,9 +180,7 @@ public sealed partial class PipelineRunner
                 progress,
                 counters,
                 total,
-                traceIdText,
-                spanIdText,
-                startedAt,
+                telemetry,
                 () =>
                 {
                     Transform(job, bytes, options);
@@ -202,9 +195,7 @@ public sealed partial class PipelineRunner
                 progress,
                 counters,
                 total,
-                traceIdText,
-                spanIdText,
-                startedAt,
+                telemetry,
                 () => SaveAsync(
                     job,
                     bytes,
@@ -221,9 +212,7 @@ public sealed partial class PipelineRunner
                         PipelinePhase.Save,
                         delay,
                         retryCount,
-                        traceIdText,
-                        spanIdText,
-                        startedAt,
+                        telemetry,
                         exception.Message),
                     cancellationToken),
                 duration => saveDuration = duration,
@@ -276,9 +265,7 @@ public sealed partial class PipelineRunner
         IProgress<PipelineProgress>? progress,
         RunCounters counters,
         int total,
-        string traceId,
-        string spanId,
-        DateTimeOffset startedAt,
+        JobTelemetryContext telemetry,
         Func<Task<T>> action,
         Action<TimeSpan> setDuration,
         Func<int> retryCount)
@@ -292,9 +279,7 @@ public sealed partial class PipelineRunner
             job,
             phase,
             retryCount: retryCount(),
-            traceId: traceId,
-            spanId: spanId,
-            startedAt: startedAt);
+            telemetry: telemetry);
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         Exception? error = null;
@@ -321,9 +306,7 @@ public sealed partial class PipelineRunner
                 phase,
                 stopwatch.Elapsed,
                 retryCount(),
-                traceId,
-                spanId,
-                startedAt,
+                telemetry,
                 error?.Message);
         }
     }
@@ -427,9 +410,7 @@ public sealed partial class PipelineRunner
         PipelinePhase phase = PipelinePhase.None,
         TimeSpan duration = default,
         int retryCount = 0,
-        string? traceId = null,
-        string? spanId = null,
-        DateTimeOffset? startedAt = null,
+        JobTelemetryContext? telemetry = null,
         string? errorMessage = null)
     {
         progress?.Report(new PipelineProgress(
@@ -444,9 +425,9 @@ public sealed partial class PipelineRunner
             phase,
             duration,
             retryCount,
-            traceId,
-            spanId,
-            startedAt,
+            telemetry?.TraceId,
+            telemetry?.SpanId,
+            telemetry?.StartedAt,
             job.InjectedFault,
             errorMessage));
     }
@@ -481,6 +462,12 @@ public sealed partial class PipelineRunner
         double delayMilliseconds);
 
     private sealed record Job(int Id, string Path, string FileName, long FileSize, FaultMode InjectedFault);
+
+    /// <summary>ジョブ全体で共有する ProcessJob Span の識別子と開始時刻をまとめて渡します。</summary>
+    /// <param name="TraceId">ProcessJob Span と handoff 行で共有する trace_id。</param>
+    /// <param name="SpanId">ProcessJob Span の span_id。</param>
+    /// <param name="StartedAt">ジョブの開始時刻。</param>
+    private readonly record struct JobTelemetryContext(string TraceId, string SpanId, DateTimeOffset StartedAt);
 
     private sealed class RunCounters
     {
