@@ -62,6 +62,12 @@ internal static class Program
         var runner = new PipelineRunner(logger);
         var progress = new Progress<PipelineProgress>(value =>
         {
+            // 詳細通知は WinUI の可視化用。Console の出力量は従来同等の開始／完了2行に保つ。
+            if (value.Event is not PipelineProgressEvent.JobStarted and not PipelineProgressEvent.JobCompleted)
+            {
+                return;
+            }
+
             System.Console.WriteLine(
                 $"progress processed={value.Processed}/{value.Total} failed={value.Failed} current={value.CurrentJob}");
         });

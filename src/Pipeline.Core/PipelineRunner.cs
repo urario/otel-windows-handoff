@@ -23,7 +23,7 @@ public sealed class PipelineRunner
 
     /// <summary>入力フォルダー直下のファイルを名前順に採番し、限定並列で処理します。</summary>
     /// <param name="options">フォルダー、並列度、障害注入などの実行設定。</param>
-    /// <param name="progress">UI やコンソールへ途中経過を返す通知先。</param>
+    /// <param name="progress">UI やコンソールへジョブ／フェーズ単位の途中経過を返す通知先。</param>
     /// <param name="cancellationToken">新規処理と待機を中止するためのトークン。</param>
     /// <returns>ジョブ ID 順に並べた全ジョブの結果。</returns>
     /// <remarks>
@@ -50,13 +50,24 @@ public sealed class PipelineRunner
 
         Directory.CreateDirectory(options.OutputDirectory);
 
-        string[] files = Directory.EnumerateFiles(options.InputDirectory, "*", SearchOption.TopDirectoryOnly)
+        Job[] jobs = Directory.EnumerateFiles(options.InputDirectory, "*", SearchOption.TopDirectoryOnly)
             .OrderBy(path => Path.GetFileName(path), StringComparer.Ordinal)
+            .Select((path, index) => CreateJob(path, index + 1, options))
             .ToArray();
-        var jobs = files.Select((path, index) => new Job(index + 1, path)).ToArray();
         var results = new ConcurrentBag<JobResult>();
-        int processed = 0;
-        int failed = 0;
+        var counters = new RunCounters();
+
+        // UI は Core と同じ列挙結果から待機中の全ジョブを作る。シェル側でファイル列挙を複製しない。
+        foreach (Job job in jobs)
+        {
+            ReportProgress(
+                progress,
+                PipelineProgressEvent.JobQueued,
+                PipelineProgressState.Waiting,
+                counters,
+                jobs.Length,
+                job);
+        }
 
         // EventSource の有効化通知は非同期なので、実ジョブを先頭イベントにすると ETL で欠落し得る。
         // 捨ててもよい専用イベントと短い猶予を置き、WPR 未使用時に5秒待つ方式は測定を歪めるため採らない。
@@ -75,25 +86,34 @@ public sealed class PipelineRunner
             },
             async (job, token) =>
             {
-                progress?.Report(new PipelineProgress(
-                    Volatile.Read(ref processed),
-                    Volatile.Read(ref failed),
+                JobResult result = await ProcessJobAsync(
+                    job,
+                    options,
+                    progress,
+                    counters,
                     jobs.Length,
-                    Path.GetFileName(job.Path)));
-
-                JobResult result = await ProcessJobAsync(job, options, token);
+                    token);
                 results.Add(result);
+
                 if (!result.Succeeded)
                 {
-                    Interlocked.Increment(ref failed);
+                    Interlocked.Increment(ref counters.Failed);
                 }
 
-                int completed = Interlocked.Increment(ref processed);
-                progress?.Report(new PipelineProgress(
-                    completed,
-                    Volatile.Read(ref failed),
+                Interlocked.Increment(ref counters.Processed);
+                ReportProgress(
+                    progress,
+                    PipelineProgressEvent.JobCompleted,
+                    result.Succeeded ? PipelineProgressState.Succeeded : PipelineProgressState.Failed,
+                    counters,
                     jobs.Length,
-                    Path.GetFileName(job.Path)));
+                    job,
+                    duration: result.Duration,
+                    retryCount: result.RetryCount,
+                    traceId: result.TraceId,
+                    spanId: result.SpanId,
+                    startedAt: result.StartedAt,
+                    errorMessage: result.ErrorMessage);
             });
 
         return new PipelineResult(results.OrderBy(result => result.JobId).ToArray());
@@ -102,35 +122,113 @@ public sealed class PipelineRunner
     private async Task<JobResult> ProcessJobAsync(
         Job job,
         PipelineOptions options,
+        IProgress<PipelineProgress>? progress,
+        RunCounters counters,
+        int total,
         CancellationToken cancellationToken)
     {
-        string fileName = Path.GetFileName(job.Path);
-        long fileSize = new FileInfo(job.Path).Length;
         Stopwatch stopwatch = Stopwatch.StartNew();
-
-        // 障害設定からの逆算では実環境のアクセス拒否を数えられないため、保存処理の実測値を結果と Span で共有します。
         var saveRetryState = new SaveRetryState();
         string? errorMessage = null;
         bool succeeded = false;
+        TimeSpan loadDuration = TimeSpan.Zero;
+        TimeSpan transformDuration = TimeSpan.Zero;
+        TimeSpan saveDuration = TimeSpan.Zero;
 
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("ProcessJob");
         activity?.SetTag("job.id", job.Id);
-        activity?.SetTag("file.name", fileName);
-        activity?.SetTag("file.size_bytes", fileSize);
+        activity?.SetTag("file.name", job.FileName);
+        activity?.SetTag("file.size_bytes", job.FileSize);
         ActivityTraceId traceId = activity?.TraceId ?? ActivityTraceId.CreateRandom();
         ActivitySpanId spanId = activity?.SpanId ?? ActivitySpanId.CreateRandom();
+        string traceIdText = traceId.ToString();
+        string spanIdText = spanId.ToString();
+        DateTimeOffset startedAt = activity is null
+            ? DateTimeOffset.UtcNow
+            : new DateTimeOffset(activity.StartTimeUtc, TimeSpan.Zero);
 
-        HandoffEventSource.Log.JobStarted(traceId.ToString(), spanId.ToString(), job.Id);
+        ReportProgress(
+            progress,
+            PipelineProgressEvent.JobStarted,
+            PipelineProgressState.Running,
+            counters,
+            total,
+            job,
+            traceId: traceIdText,
+            spanId: spanIdText,
+            startedAt: startedAt);
+
+        HandoffEventSource.Log.JobStarted(traceIdText, spanIdText, job.Id);
         string handoff =
-            $"handoff ts={DateTimeOffset.UtcNow:O} pid={Environment.ProcessId} trace_id={traceId} job={job.Id}";
+            $"handoff ts={startedAt:O} pid={Environment.ProcessId} trace_id={traceIdText} job={job.Id}";
         logger.LogInformation("{Handoff}", handoff);
         Console.WriteLine(handoff);
 
         try
         {
-            byte[] bytes = await LoadAsync(job, fileName, options, cancellationToken);
-            Transform(job, fileName, bytes, options);
-            await SaveAsync(job, fileName, bytes, options, activity, saveRetryState, cancellationToken);
+            byte[] bytes = await ExecutePhaseAsync(
+                PipelinePhase.Load,
+                job,
+                progress,
+                counters,
+                total,
+                traceIdText,
+                spanIdText,
+                startedAt,
+                () => LoadAsync(job, options, cancellationToken),
+                duration => loadDuration = duration,
+                () => saveRetryState.Count);
+
+            await ExecutePhaseAsync(
+                PipelinePhase.Transform,
+                job,
+                progress,
+                counters,
+                total,
+                traceIdText,
+                spanIdText,
+                startedAt,
+                () =>
+                {
+                    Transform(job, bytes, options);
+                    return Task.FromResult(true);
+                },
+                duration => transformDuration = duration,
+                () => saveRetryState.Count);
+
+            await ExecutePhaseAsync(
+                PipelinePhase.Save,
+                job,
+                progress,
+                counters,
+                total,
+                traceIdText,
+                spanIdText,
+                startedAt,
+                () => SaveAsync(
+                    job,
+                    bytes,
+                    options,
+                    activity,
+                    saveRetryState,
+                    (retryCount, delay, exception) => ReportProgress(
+                        progress,
+                        PipelineProgressEvent.RetryScheduled,
+                        PipelineProgressState.Running,
+                        counters,
+                        total,
+                        job,
+                        PipelinePhase.Save,
+                        delay,
+                        retryCount,
+                        traceIdText,
+                        spanIdText,
+                        startedAt,
+                        exception.Message),
+                    cancellationToken),
+                duration => saveDuration = duration,
+                () => saveRetryState.Count);
+
             succeeded = true;
             PipelineInstrumentation.JobsCompleted.Add(1);
         }
@@ -145,27 +243,95 @@ public sealed class PipelineRunner
             activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
             activity?.AddException(exception);
             PipelineInstrumentation.JobsFailed.Add(1);
-            logger.LogError(exception, "ジョブ失敗 job.id={JobId} file.name={FileName}", job.Id, fileName);
+            logger.LogError(exception, "ジョブ失敗 job.id={JobId} file.name={FileName}", job.Id, job.FileName);
         }
         finally
         {
             stopwatch.Stop();
             activity?.SetTag("retry.count", saveRetryState.Count);
             PipelineInstrumentation.JobDuration.Record(stopwatch.Elapsed.TotalMilliseconds);
-            HandoffEventSource.Log.JobCompleted(traceId.ToString(), job.Id);
+            HandoffEventSource.Log.JobCompleted(traceIdText, job.Id);
         }
 
-        return new JobResult(job.Id, fileName, succeeded, saveRetryState.Count, stopwatch.Elapsed, errorMessage);
+        return new JobResult(
+            job.Id,
+            job.FileName,
+            job.FileSize,
+            succeeded,
+            saveRetryState.Count,
+            stopwatch.Elapsed,
+            loadDuration,
+            transformDuration,
+            saveDuration,
+            traceIdText,
+            spanIdText,
+            startedAt,
+            job.InjectedFault,
+            errorMessage);
     }
 
-    private async Task<byte[]> LoadAsync(
+    private async Task<T> ExecutePhaseAsync<T>(
+        PipelinePhase phase,
         Job job,
-        string fileName,
-        PipelineOptions options,
-        CancellationToken cancellationToken)
+        IProgress<PipelineProgress>? progress,
+        RunCounters counters,
+        int total,
+        string traceId,
+        string spanId,
+        DateTimeOffset startedAt,
+        Func<Task<T>> action,
+        Action<TimeSpan> setDuration,
+        Func<int> retryCount)
+    {
+        ReportProgress(
+            progress,
+            PipelineProgressEvent.PhaseStarted,
+            PipelineProgressState.Running,
+            counters,
+            total,
+            job,
+            phase,
+            retryCount: retryCount(),
+            traceId: traceId,
+            spanId: spanId,
+            startedAt: startedAt);
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        Exception? error = null;
+        try
+        {
+            return await action();
+        }
+        catch (Exception exception)
+        {
+            error = exception;
+            throw;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            setDuration(stopwatch.Elapsed);
+            ReportProgress(
+                progress,
+                PipelineProgressEvent.PhaseCompleted,
+                error is null ? PipelineProgressState.Succeeded : PipelineProgressState.Failed,
+                counters,
+                total,
+                job,
+                phase,
+                stopwatch.Elapsed,
+                retryCount(),
+                traceId,
+                spanId,
+                startedAt,
+                error?.Message);
+        }
+    }
+
+    private async Task<byte[]> LoadAsync(Job job, PipelineOptions options, CancellationToken cancellationToken)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("load");
-        logger.LogInformation("フェーズ開始 phase=load job.id={JobId} file.name={FileName}", job.Id, fileName);
+        logger.LogInformation("フェーズ開始 phase=load job.id={JobId} file.name={FileName}", job.Id, job.FileName);
 
         if (options.FaultMode.HasFlag(FaultMode.SlowRead) && IsFaultTarget(job.Id, options))
         {
@@ -173,14 +339,14 @@ public sealed class PipelineRunner
         }
 
         byte[] bytes = await File.ReadAllBytesAsync(job.Path, cancellationToken);
-        logger.LogInformation("フェーズ終了 phase=load job.id={JobId} file.name={FileName}", job.Id, fileName);
+        logger.LogInformation("フェーズ終了 phase=load job.id={JobId} file.name={FileName}", job.Id, job.FileName);
         return bytes;
     }
 
-    private void Transform(Job job, string fileName, byte[] bytes, PipelineOptions options)
+    private void Transform(Job job, byte[] bytes, PipelineOptions options)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("transform");
-        logger.LogInformation("フェーズ開始 phase=transform job.id={JobId} file.name={FileName}", job.Id, fileName);
+        logger.LogInformation("フェーズ開始 phase=transform job.id={JobId} file.name={FileName}", job.Id, job.FileName);
 
         // 固定待機では CPU 障害解析の材料にならないため、1 MiB x 4 pass で数十 ms 程度の実負荷を作る。
         // 画像ライブラリは計装の読みやすさを損なうため、依存のないバイト演算に限定する。
@@ -192,20 +358,20 @@ public sealed class PipelineRunner
             }
         }
 
-        logger.LogInformation("フェーズ終了 phase=transform job.id={JobId} file.name={FileName}", job.Id, fileName);
+        logger.LogInformation("フェーズ終了 phase=transform job.id={JobId} file.name={FileName}", job.Id, job.FileName);
     }
 
-    private async Task SaveAsync(
+    private async Task<bool> SaveAsync(
         Job job,
-        string fileName,
         byte[] bytes,
         PipelineOptions options,
         Activity? jobActivity,
         SaveRetryState retryState,
+        Action<int, TimeSpan, UnauthorizedAccessException> reportRetry,
         CancellationToken cancellationToken)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("save");
-        logger.LogInformation("フェーズ開始 phase=save job.id={JobId} file.name={FileName}", job.Id, fileName);
+        logger.LogInformation("フェーズ開始 phase=save job.id={JobId} file.name={FileName}", job.Id, job.FileName);
 
         while (true)
         {
@@ -216,16 +382,16 @@ public sealed class PipelineRunner
                     throw new UnauthorizedAccessException("決定的な access-denied 障害を注入しました。");
                 }
 
-                string outputPath = Path.Combine(options.OutputDirectory, fileName);
+                string outputPath = Path.Combine(options.OutputDirectory, job.FileName);
                 await File.WriteAllBytesAsync(outputPath, bytes, cancellationToken);
                 activity?.SetTag("retry.count", retryState.Count);
                 jobActivity?.SetTag("retry.count", retryState.Count);
                 logger.LogInformation(
                     "フェーズ終了 phase=save job.id={JobId} file.name={FileName} retry.count={RetryCount}",
                     job.Id,
-                    fileName,
+                    job.FileName,
                     retryState.Count);
-                return;
+                return true;
             }
             catch (UnauthorizedAccessException exception) when (retryState.Count < options.MaxSaveRetries)
             {
@@ -234,11 +400,12 @@ public sealed class PipelineRunner
                 PipelineInstrumentation.RetriesTotal.Add(1);
                 TimeSpan delay = TimeSpan.FromMilliseconds(
                     options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retryState.Count - 1));
+                reportRetry(retryState.Count, delay, exception);
                 logger.LogWarning(
                     exception,
                     "save を再試行 job.id={JobId} file.name={FileName} retry.count={RetryCount} delay_ms={DelayMilliseconds}",
                     job.Id,
-                    fileName,
+                    job.FileName,
                     retryState.Count,
                     delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
@@ -254,12 +421,58 @@ public sealed class PipelineRunner
         }
     }
 
+    private static Job CreateJob(string path, int jobId, PipelineOptions options)
+    {
+        FaultMode injectedFault = IsFaultTarget(jobId, options) ? options.FaultMode : FaultMode.None;
+        return new Job(jobId, path, Path.GetFileName(path), new FileInfo(path).Length, injectedFault);
+    }
+
+    private static void ReportProgress(
+        IProgress<PipelineProgress>? progress,
+        PipelineProgressEvent progressEvent,
+        PipelineProgressState state,
+        RunCounters counters,
+        int total,
+        Job job,
+        PipelinePhase phase = PipelinePhase.None,
+        TimeSpan duration = default,
+        int retryCount = 0,
+        string? traceId = null,
+        string? spanId = null,
+        DateTimeOffset? startedAt = null,
+        string? errorMessage = null)
+    {
+        progress?.Report(new PipelineProgress(
+            progressEvent,
+            state,
+            Volatile.Read(ref counters.Processed),
+            Volatile.Read(ref counters.Failed),
+            total,
+            job.Id,
+            job.FileName,
+            job.FileSize,
+            phase,
+            duration,
+            retryCount,
+            traceId,
+            spanId,
+            startedAt,
+            job.InjectedFault,
+            errorMessage));
+    }
+
     private static bool IsFaultTarget(int jobId, PipelineOptions options)
     {
         return jobId % options.FaultTargetEvery == 0;
     }
 
-    private sealed record Job(int Id, string Path);
+    private sealed record Job(int Id, string Path, string FileName, long FileSize, FaultMode InjectedFault);
+
+    private sealed class RunCounters
+    {
+        public int Processed;
+        public int Failed;
+    }
 
     private sealed class SaveRetryState
     {

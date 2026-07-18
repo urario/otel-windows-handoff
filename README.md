@@ -138,11 +138,15 @@ otel flush mode=otlp elapsed_ms=<実測値> success=true
 
 ## WinUI 3 シェル
 
-通常起動は次のコマンドです。入力/出力、二つの障害トグル、並列度、OTel モードを画面で指定できます。
+通常起動は次のコマンドです。入力/出力、二つの障害トグル、並列度、OTel モードは上部の「実行設定」にまとめています。
 
 ```powershell
 dotnet run --project .\src\App.WinUI --configuration Release
 ```
+
+主画面には全ジョブをファイル名順で表示し、load → transform → save の状態と実測時間、再試行、結果を追跡します。10件ごとの `slow-read` は警告色、`access-denied` はエラー色で識別できます。ジョブを選択すると、Trace UI・ETL・handoff 行と同じ `trace_id` / `span_id`、開始時刻、フェーズ別所要時間を確認し、`trace_id` をコピーできます。タイトルバーの PID は ProcDump の指定に使います。
+
+画面は OS のライト/ダークテーマに追従し、Windows 11 では Mica、非対応環境では標準背景へフォールバックします。完了とエラーの要約は画面下部の通知領域に表示します。
 
 「UIを30秒フリーズ」は UI スレッドを意図的にブロックします。非同期処理では「応答なし」を再現できないため `Thread.Sleep` を使っています。ボタンのツールチップにも危険性を表示しています。
 

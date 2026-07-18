@@ -2,65 +2,400 @@
     x:Class="OtelWindowsHandoff.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:OtelWindowsHandoff.WinUI"
     Title="OTel Windows Handoff">
-    <ScrollViewer>
-        <Grid x:Name="RootGrid" Padding="24" RowSpacing="14" ColumnSpacing="12">
+
+    <Grid x:Name="RootGrid">
+        <Grid.Resources>
+            <local:PhaseStateToBrushConverter x:Key="PhaseStateToBrushConverter" />
+            <local:PhaseStateToGlyphConverter x:Key="PhaseStateToGlyphConverter" />
+            <local:FaultModeToBrushConverter x:Key="FaultModeToBrushConverter" />
+
+            <Style x:Key="CardBorderStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
+            </Style>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Margin="0,0,144,0" Padding="16,0" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+            <FontIcon VerticalAlignment="Center" FontSize="16" Glyph="&#xE8B9;" />
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="画像ジョブパイプライン" />
+                <TextBlock VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="OpenTelemetry handoff lab" />
+            </StackPanel>
+            <Border Grid.Column="2" Padding="10,4" VerticalAlignment="Center"
+                    Background="{ThemeResource ControlFillColorSecondaryBrush}" CornerRadius="12">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon FontSize="12" Glyph="&#xE950;" />
+                    <TextBlock x:Name="ProcessIdTextBlock" Style="{StaticResource CaptionTextBlockStyle}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1" Padding="16,8,16,16" RowSpacing="12">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <TextBlock Grid.Row="0" Grid.ColumnSpan="2" FontSize="24" FontWeight="SemiBold"
-                       Text="画像ジョブパイプライン" />
+            <Grid Grid.Row="0" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Expander x:Name="SettingsExpander" IsExpanded="False">
+                <Expander.Header>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon FontSize="14" Glyph="&#xE713;" />
+                        <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="実行設定" />
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   Text="フォルダー・OTel・並列度・障害注入" />
+                    </StackPanel>
+                </Expander.Header>
+                <Grid x:Name="ConfigurationPanel" Padding="16,8,16,16" RowSpacing="8" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-            <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="入力フォルダー" />
-            <TextBox x:Name="InputDirectoryTextBox" Grid.Row="1" Grid.Column="1" Text="./data/in" />
+                    <TextBlock VerticalAlignment="Center" Text="入力" />
+                    <TextBox x:Name="InputDirectoryTextBox" Grid.Column="1" Text="./data/in" />
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="出力" />
+                    <TextBox x:Name="OutputDirectoryTextBox" Grid.Column="3" Text="./data/out" />
 
-            <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="出力フォルダー" />
-            <TextBox x:Name="OutputDirectoryTextBox" Grid.Row="2" Grid.Column="1" Text="./data/out" />
+                    <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="OTel" />
+                    <ComboBox x:Name="OtelModeComboBox" Grid.Row="1" Grid.Column="1"
+                              HorizontalAlignment="Stretch" SelectedIndex="2">
+                        <ComboBoxItem Content="off" />
+                        <ComboBoxItem Content="sdk" />
+                        <ComboBoxItem Content="otlp" />
+                    </ComboBox>
+                    <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="並列度" />
+                    <NumberBox x:Name="ParallelismNumberBox" Grid.Row="1" Grid.Column="3"
+                               Minimum="1" Maximum="32" Value="2" SpinButtonPlacementMode="Inline" />
 
-            <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="OTel モード" />
-            <ComboBox x:Name="OtelModeComboBox" Grid.Row="3" Grid.Column="1" SelectedIndex="2">
-                <ComboBoxItem Content="off" />
-                <ComboBoxItem Content="sdk" />
-                <ComboBoxItem Content="otlp" />
-            </ComboBox>
+                    <StackPanel Grid.Row="2" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="12">
+                        <TextBlock VerticalAlignment="Center" Text="障害注入" />
+                        <CheckBox x:Name="SlowReadCheckBox" Content="slow-read (10件ごと)" />
+                        <CheckBox x:Name="AccessDeniedCheckBox" Content="access-denied (10件ごと)" />
+                    </StackPanel>
+                </Grid>
+                </Expander>
+                <StackPanel Grid.Column="1" VerticalAlignment="Top" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="StartButton" Click="StartButton_Click"
+                            Style="{StaticResource AccentButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon FontSize="13" Glyph="&#xE768;" />
+                            <TextBlock Text="開始" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="StopButton" Click="StopButton_Click" IsEnabled="False">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon FontSize="13" Glyph="&#xE71A;" />
+                            <TextBlock Text="停止" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="FreezeButton" Click="FreezeButton_Click"
+                            BorderBrush="{ThemeResource SystemFillColorCautionBrush}"
+                            Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                            ToolTipService.ToolTip="危険: UIスレッドを30秒ブロックし、意図的に「応答なし」を再現します。">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon FontSize="13" Glyph="&#xE7BA;" />
+                            <TextBlock Text="UIを30秒フリーズ" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
 
-            <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="並列度" />
-            <NumberBox x:Name="ParallelismNumberBox" Grid.Row="4" Grid.Column="1"
-                       Minimum="1" Maximum="32" Value="2" SpinButtonPlacementMode="Inline" />
+            <Grid Grid.Row="1" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
-            <TextBlock Grid.Row="5" VerticalAlignment="Top" Text="障害注入" />
-            <StackPanel Grid.Row="5" Grid.Column="1" Spacing="8">
-                <CheckBox x:Name="SlowReadCheckBox" Content="slow-read (10件ごとに3秒遅延)" />
-                <CheckBox x:Name="AccessDeniedCheckBox" Content="access-denied (10件ごとにsave失敗)" />
-            </StackPanel>
+                <Border Padding="12,8" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="処理済み" />
+                        <TextBlock x:Name="ProcessedSummaryTextBlock" Style="{StaticResource SubtitleTextBlockStyle}" Text="0 / 0" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Padding="12,8" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="失敗" />
+                        <TextBlock x:Name="FailedSummaryTextBlock" Style="{StaticResource SubtitleTextBlockStyle}"
+                                   Foreground="{ThemeResource SystemFillColorCriticalBrush}" Text="0" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Padding="12,8" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="リトライ計" />
+                        <TextBlock x:Name="RetrySummaryTextBlock" Style="{StaticResource SubtitleTextBlockStyle}"
+                                   Foreground="{ThemeResource SystemFillColorCautionBrush}" Text="0" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="3" Padding="12,8" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="経過時間" />
+                        <TextBlock x:Name="ElapsedSummaryTextBlock" Style="{StaticResource SubtitleTextBlockStyle}" Text="0.0 s" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="4" Padding="12,8" Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="2">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="スループット" />
+                        <TextBlock x:Name="ThroughputSummaryTextBlock" Style="{StaticResource SubtitleTextBlockStyle}" Text="0.0 件/秒" />
+                    </StackPanel>
+                </Border>
+            </Grid>
 
-            <StackPanel Grid.Row="6" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="10">
-                <Button x:Name="StartButton" Click="StartButton_Click" Content="開始" />
-                <Button x:Name="StopButton" Click="StopButton_Click" Content="停止" IsEnabled="False" />
-                <Button x:Name="FreezeButton" Click="FreezeButton_Click" Content="UIを30秒フリーズ"
-                        ToolTipService.ToolTip="危険: UIスレッドを30秒ブロックし、意図的に「応答なし」を再現します。" />
-            </StackPanel>
+            <Grid Grid.Row="2" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="328" />
+                </Grid.ColumnDefinitions>
 
-            <ProgressBar x:Name="ProgressBar" Grid.Row="7" Grid.ColumnSpan="2" Minimum="0" Maximum="1" />
+                <Border Padding="12" Style="{StaticResource CardBorderStyle}">
+                    <Grid RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="8" Grid.ColumnSpan="2" Spacing="4">
-                <TextBlock x:Name="ProgressTextBlock" Text="処理済み 0 / 失敗 0" />
-                <TextBlock x:Name="CurrentJobTextBlock" Text="現在のジョブ: -" />
-                <TextBlock x:Name="StatusTextBlock" Text="待機中" TextWrapping="Wrap" />
-            </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="ジョブ" />
+                                <TextBlock VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           Text="load → transform → save" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <FontIcon FontSize="10" Foreground="{ThemeResource SystemFillColorCautionBrush}" Glyph="&#xE7BA;" />
+                                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="slow-read" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <FontIcon FontSize="10" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Glyph="&#xEA39;" />
+                                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="access-denied" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Grid.Row="1" Padding="8,0" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="42" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="64" />
+                                <ColumnDefinition Width="290" />
+                                <ColumnDefinition Width="72" />
+                                <ColumnDefinition Width="44" />
+                                <ColumnDefinition Width="94" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="ID" />
+                            <TextBlock Grid.Column="1" Style="{StaticResource CaptionTextBlockStyle}" Text="ファイル名" />
+                            <TextBlock Grid.Column="2" Style="{StaticResource CaptionTextBlockStyle}" Text="サイズ" />
+                            <TextBlock Grid.Column="3" Style="{StaticResource CaptionTextBlockStyle}" Text="フェーズ進行" />
+                            <TextBlock Grid.Column="4" Style="{StaticResource CaptionTextBlockStyle}" Text="所要時間" />
+                            <TextBlock Grid.Column="5" Style="{StaticResource CaptionTextBlockStyle}" Text="再試行" />
+                            <TextBlock Grid.Column="6" Style="{StaticResource CaptionTextBlockStyle}" Text="結果" />
+                        </Grid>
+
+                        <ListView x:Name="JobsListView" Grid.Row="2" ItemsSource="{Binding JobRows}"
+                                  SelectionChanged="JobsListView_SelectionChanged"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <ListView.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <ItemsStackPanel Orientation="Vertical" />
+                                </ItemsPanelTemplate>
+                            </ListView.ItemsPanel>
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="MinHeight" Value="50" />
+                                    <Setter Property="Padding" Value="0" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="local:JobRowViewModel">
+                                    <Border Padding="4,6,8,6"
+                                            BorderBrush="{Binding InjectedFault, Converter={StaticResource FaultModeToBrushConverter}}"
+                                            BorderThickness="4,0,0,0">
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="42" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="64" />
+                                                <ColumnDefinition Width="290" />
+                                                <ColumnDefinition Width="72" />
+                                                <ColumnDefinition Width="44" />
+                                                <ColumnDefinition Width="94" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock VerticalAlignment="Center" Text="{Binding JobId}" />
+                                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding FileName}"
+                                                       TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding FileName}" />
+                                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Text="{Binding FileSizeText}" />
+                                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
+                                                <Border Width="88" Padding="5,4" CornerRadius="4"
+                                                        Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                                        BorderBrush="{Binding LoadState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                        BorderThickness="1">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <FontIcon FontSize="11"
+                                                                  Foreground="{Binding LoadState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                                  Glyph="{Binding LoadState, Converter={StaticResource PhaseStateToGlyphConverter}, Mode=OneWay}" />
+                                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                                                   Text="{Binding LoadText, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </Border>
+                                                <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="→" />
+                                                <Border Width="88" Padding="5,4" CornerRadius="4"
+                                                        Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                                        BorderBrush="{Binding TransformState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                        BorderThickness="1">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <FontIcon FontSize="11"
+                                                                  Foreground="{Binding TransformState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                                  Glyph="{Binding TransformState, Converter={StaticResource PhaseStateToGlyphConverter}, Mode=OneWay}" />
+                                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                                                   Text="{Binding TransformText, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </Border>
+                                                <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="→" />
+                                                <Border Width="88" Padding="5,4" CornerRadius="4"
+                                                        Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                                        BorderBrush="{Binding SaveState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                        BorderThickness="1">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <FontIcon FontSize="11"
+                                                                  Foreground="{Binding SaveState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                                  Glyph="{Binding SaveState, Converter={StaticResource PhaseStateToGlyphConverter}, Mode=OneWay}" />
+                                                        <TextBlock VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                                                   Text="{Binding SaveText, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="4" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Text="{Binding DurationText, Mode=OneWay}" />
+                                            <TextBlock Grid.Column="5" VerticalAlignment="Center" TextAlignment="Center"
+                                                       Text="{Binding RetryText, Mode=OneWay}" />
+                                            <TextBlock Grid.Column="6" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{Binding JobState, Converter={StaticResource PhaseStateToBrushConverter}, Mode=OneWay}"
+                                                       Text="{Binding ResultText, Mode=OneWay}" TextWrapping="Wrap" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="1" Padding="16" Style="{StaticResource CardBorderStyle}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="DetailPanel" Spacing="12">
+                            <StackPanel Spacing="2">
+                                <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="ジョブ詳細" />
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           Text="選択したジョブの引き継ぎキー" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="ファイル" />
+                                <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="{Binding FileName}" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="trace_id" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock VerticalAlignment="Center" Text="{Binding TraceId}" TextWrapping="WrapWholeWords" />
+                                    <Button x:Name="CopyTraceButton" Grid.Column="1" Click="CopyTraceButton_Click"
+                                            ToolTipService.ToolTip="trace_id をコピー">
+                                        <FontIcon FontSize="13" Glyph="&#xE8C8;" />
+                                    </Button>
+                                </Grid>
+                            </StackPanel>
+
+                            <Grid RowSpacing="6" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="104" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="span_id" />
+                                <TextBlock Grid.Column="1" Text="{Binding SpanId}" />
+                                <TextBlock Grid.Row="1" Style="{StaticResource CaptionTextBlockStyle}" Text="開始時刻" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding StartedAtText}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="2" Style="{StaticResource CaptionTextBlockStyle}" Text="load" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LoadDurationText}" />
+                                <TextBlock Grid.Row="3" Style="{StaticResource CaptionTextBlockStyle}" Text="transform" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding TransformDurationText}" />
+                                <TextBlock Grid.Row="4" Style="{StaticResource CaptionTextBlockStyle}" Text="save" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SaveDurationText}" />
+                                <TextBlock Grid.Row="5" Style="{StaticResource CaptionTextBlockStyle}" Text="リトライ" />
+                                <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding RetryText}" />
+                            </Grid>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="エラーメッセージ" />
+                                <TextBlock Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                           Text="{Binding ErrorMessage}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Row="3" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ProgressBar x:Name="PipelineProgressBar" Minimum="0" Maximum="1" />
+                <InfoBar x:Name="StatusInfoBar" Grid.Row="1" IsClosable="False" IsOpen="True"
+                         Message="実行準備完了" Severity="Informational" />
+            </Grid>
         </Grid>
-    </ScrollViewer>
+    </Grid>
 </Window>

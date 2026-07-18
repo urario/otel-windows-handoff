@@ -153,6 +153,81 @@ public sealed class PipelineRunnerTests
         });
     }
 
+    /// <summary>進捗通知が待機から失敗までの全状態と、実際の ProcessJob Span の ID を共有することを検証します。</summary>
+    /// <returns>非同期テストの完了を表すタスク。</returns>
+    [Fact]
+    public async Task ProgressReportsJobAndPhaseLifecycleWithTelemetryIdentifiers()
+    {
+        using var workspace = new TestWorkspace();
+        await workspace.WriteInputsAsync(1);
+        var stopped = new ConcurrentBag<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineInstrumentation.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Add,
+        };
+        ActivitySource.AddActivityListener(listener);
+        var reports = new ConcurrentQueue<PipelineProgress>();
+        var runner = new PipelineRunner(NullLogger<PipelineRunner>.Instance);
+        PipelineOptions options = workspace.CreateOptions() with
+        {
+            FaultMode = FaultMode.AccessDenied,
+            FaultTargetEvery = 1,
+            MaxSaveRetries = 2,
+            InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+        };
+
+        PipelineResult result = await runner.RunAsync(options, new RecordingProgress<PipelineProgress>(reports.Enqueue));
+
+        PipelineProgress[] events = reports.ToArray();
+        PipelineProgress queued = Assert.Single(events, value => value.Event == PipelineProgressEvent.JobQueued);
+        Assert.Equal(PipelineProgressState.Waiting, queued.State);
+        Assert.Equal("input-001.bin", queued.FileName);
+        Assert.Equal(16 * 1024L, queued.FileSize);
+        Assert.Equal(FaultMode.AccessDenied, queued.InjectedFault);
+        Assert.Null(queued.TraceId);
+
+        PipelineProgress started = Assert.Single(events, value => value.Event == PipelineProgressEvent.JobStarted);
+        Activity root = Assert.Single(stopped, activity => activity.DisplayName == "ProcessJob");
+        Assert.Equal(root.TraceId.ToString(), started.TraceId);
+        Assert.Equal(root.SpanId.ToString(), started.SpanId);
+        Assert.NotNull(started.StartedAt);
+
+        AssertPhaseSucceeded(events, PipelinePhase.Load);
+        AssertPhaseSucceeded(events, PipelinePhase.Transform);
+        PipelineProgress save = Assert.Single(
+            events,
+            value => value.Event == PipelineProgressEvent.PhaseCompleted && value.Phase == PipelinePhase.Save);
+        Assert.Equal(PipelineProgressState.Failed, save.State);
+        Assert.Equal(2, save.RetryCount);
+        Assert.Contains("access-denied", save.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(2, events.Count(value => value.Event == PipelineProgressEvent.RetryScheduled));
+
+        PipelineProgress completed = Assert.Single(events, value => value.Event == PipelineProgressEvent.JobCompleted);
+        Assert.Equal(PipelineProgressState.Failed, completed.State);
+        Assert.Equal(1, completed.Processed);
+        Assert.Equal(1, completed.Failed);
+        Assert.Equal(started.TraceId, completed.TraceId);
+        Assert.Equal(started.SpanId, completed.SpanId);
+        Assert.Equal(started.StartedAt, completed.StartedAt);
+        Assert.Equal(result.Jobs[0].TraceId, completed.TraceId);
+    }
+
+    private static void AssertPhaseSucceeded(IEnumerable<PipelineProgress> events, PipelinePhase phase)
+    {
+        PipelineProgress started = Assert.Single(
+            events,
+            value => value.Event == PipelineProgressEvent.PhaseStarted && value.Phase == phase);
+        PipelineProgress completed = Assert.Single(
+            events,
+            value => value.Event == PipelineProgressEvent.PhaseCompleted && value.Phase == phase);
+        Assert.Equal(PipelineProgressState.Running, started.State);
+        Assert.Equal(PipelineProgressState.Succeeded, completed.State);
+        Assert.True(completed.Duration >= TimeSpan.Zero);
+        Assert.Equal(started.TraceId, completed.TraceId);
+    }
+
     private sealed class TestWorkspace : IDisposable
     {
         /// <summary>テストごとに独立した一時入力フォルダーを作成します。</summary>
@@ -205,6 +280,14 @@ public sealed class PipelineRunnerTests
             {
                 Directory.Delete(Root, recursive: true);
             }
+        }
+    }
+
+    private sealed class RecordingProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value)
+        {
+            report(value);
         }
     }
 }
