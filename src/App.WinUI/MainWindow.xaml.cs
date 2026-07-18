@@ -18,7 +18,7 @@ namespace OtelWindowsHandoff.WinUI;
 public sealed partial class MainWindow : Window
 {
     private readonly WindowArguments arguments;
-    private readonly Dictionary<int, JobRowViewModel> jobsById = new();
+    private readonly Dictionary<int, JobRowViewModel> jobsById = [];
     private readonly Stopwatch runStopwatch = new();
     private readonly DispatcherQueueTimer summaryTimer;
     private CancellationTokenSource? cancellation;
@@ -50,7 +50,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>仮想化されたジョブ一覧の表示モデルを取得します。</summary>
-    public ObservableCollection<JobRowViewModel> JobRows { get; } = new();
+    public ObservableCollection<JobRowViewModel> JobRows { get; } = [];
 
     private async void RootGrid_Loaded(object sender, RoutedEventArgs e)
     {

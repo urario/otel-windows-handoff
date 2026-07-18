@@ -172,10 +172,7 @@ public sealed class TelemetrySession : IDisposable
             ?? "unknown";
 
         builder.AddService(ServiceName, serviceVersion: version)
-            .AddAttributes(new[]
-            {
-                new KeyValuePair<string, object>("host.name", Environment.MachineName),
-            });
+            .AddAttributes([new KeyValuePair<string, object>("host.name", Environment.MachineName)]);
     }
 
     private static void ConfigureExporter(OtlpExporterOptions options, Uri endpoint)
