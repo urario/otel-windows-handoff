@@ -1,7 +1,13 @@
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using OtelWindowsHandoff.Pipeline;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Graphics;
 
 namespace OtelWindowsHandoff.WinUI;
 
@@ -12,18 +18,39 @@ namespace OtelWindowsHandoff.WinUI;
 public sealed partial class MainWindow : Window
 {
     private readonly WindowArguments arguments;
+    private readonly Dictionary<int, JobRowViewModel> jobsById = [];
+    private readonly Stopwatch runStopwatch = new();
+    private readonly DispatcherQueueTimer summaryTimer;
     private CancellationTokenSource? cancellation;
     private bool running;
+    private int processed;
+    private int failed;
+    private int total;
 
     /// <summary>コマンドライン引数を解釈し、画面の初期値へ反映します。</summary>
     /// <param name="commandLineArguments">実行ファイル名を除いた起動引数。</param>
     public MainWindow(string[] commandLineArguments)
     {
         InitializeComponent();
+        RootGrid.DataContext = this;
         arguments = WindowArguments.Parse(commandLineArguments);
+
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        SystemBackdrop = new MicaBackdrop();
+        AppWindow.Resize(new SizeInt32(1180, 760));
+
+        ProcessIdTextBlock.Text = $"PID {Environment.ProcessId}";
+        summaryTimer = DispatcherQueue.CreateTimer();
+        summaryTimer.Interval = TimeSpan.FromMilliseconds(200);
+        summaryTimer.Tick += (_, _) => UpdateSummary();
+
         ApplyArguments();
         RootGrid.Loaded += RootGrid_Loaded;
     }
+
+    /// <summary>仮想化されたジョブ一覧の表示モデルを取得します。</summary>
+    public ObservableCollection<JobRowViewModel> JobRows { get; } = [];
 
     private async void RootGrid_Loaded(object sender, RoutedEventArgs e)
     {
@@ -49,6 +76,26 @@ public sealed partial class MainWindow : Window
         Thread.Sleep(TimeSpan.FromSeconds(30));
     }
 
+    private void JobsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        JobRowViewModel? selected = JobsListView.SelectedItem as JobRowViewModel;
+        DetailPanel.DataContext = selected;
+        CopyTraceButton.IsEnabled = selected?.CanCopyTraceId == true;
+    }
+
+    private void CopyTraceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (JobsListView.SelectedItem is not JobRowViewModel selected || !selected.CanCopyTraceId)
+        {
+            return;
+        }
+
+        var package = new DataPackage();
+        package.SetText(selected.TraceId);
+        Clipboard.SetContent(package);
+        SetStatus("コピー完了", "選択したジョブの trace_id をクリップボードへコピーしました。", InfoBarSeverity.Success);
+    }
+
     private async Task RunPipelineAsync()
     {
         if (running)
@@ -58,10 +105,14 @@ public sealed partial class MainWindow : Window
 
         running = true;
         cancellation = new CancellationTokenSource();
+        runStopwatch.Reset();
+        ResetRunView();
+        SetConfigurationEnabled(false);
         StartButton.IsEnabled = false;
         StopButton.IsEnabled = true;
-        StatusTextBlock.Text = "実行中";
+        SetStatus("実行中", "ジョブを load → transform → save の順に処理しています。", InfoBarSeverity.Informational);
 
+        var progress = new ProgressBuffer<PipelineProgress>(DispatcherQueue, ApplyProgressBatch);
         try
         {
             OtelMode otelMode = ParseOtelMode(SelectedOtelMode());
@@ -81,7 +132,8 @@ public sealed partial class MainWindow : Window
                 TimeSpan.FromMilliseconds(arguments.FlushTimeoutMilliseconds));
             ILogger<PipelineRunner> logger = telemetry.LoggerFactory.CreateLogger<PipelineRunner>();
             var runner = new PipelineRunner(logger);
-            var progress = new Progress<PipelineProgress>(UpdateProgress);
+            runStopwatch.Restart();
+            summaryTimer.Start();
             PipelineResult result = await runner.RunAsync(
                 new PipelineOptions
                 {
@@ -92,22 +144,36 @@ public sealed partial class MainWindow : Window
                 },
                 progress,
                 cancellation.Token);
+            runStopwatch.Stop();
+            summaryTimer.Stop();
+            progress.Flush();
+            UpdateSummary();
 
-            StatusTextBlock.Text = $"完了: 成功 {result.Completed} / 失敗 {result.Failed}";
+            InfoBarSeverity severity = result.Failed == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+            SetStatus(
+                "処理完了",
+                $"成功 {result.Completed} 件 / 失敗 {result.Failed} 件 / リトライ {result.TotalRetries} 回",
+                severity);
         }
         catch (OperationCanceledException)
         {
-            StatusTextBlock.Text = "停止しました";
+            progress.Flush();
+            SetStatus("停止", "処理を停止しました。", InfoBarSeverity.Warning);
         }
         catch (Exception exception)
         {
-            StatusTextBlock.Text = $"エラー: {exception.Message}";
+            progress.Flush();
+            SetStatus("エラー", exception.Message, InfoBarSeverity.Error);
         }
         finally
         {
+            runStopwatch.Stop();
+            summaryTimer.Stop();
+            UpdateSummary();
             cancellation.Dispose();
             cancellation = null;
             running = false;
+            SetConfigurationEnabled(true);
             StartButton.IsEnabled = true;
             StopButton.IsEnabled = false;
 
@@ -118,15 +184,85 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void UpdateProgress(PipelineProgress progress)
+    private void ApplyProgressBatch(IReadOnlyList<PipelineProgress> updates)
     {
-        DispatcherQueue.TryEnqueue(() =>
+        foreach (PipelineProgress progress in updates)
         {
-            ProgressBar.Maximum = Math.Max(1, progress.Total);
-            ProgressBar.Value = progress.Processed;
-            ProgressTextBlock.Text = $"処理済み {progress.Processed} / 失敗 {progress.Failed}";
-            CurrentJobTextBlock.Text = $"現在のジョブ: {progress.CurrentJob}";
-        });
+            processed = Math.Max(processed, progress.Processed);
+            failed = Math.Max(failed, progress.Failed);
+            total = Math.Max(total, progress.Total);
+
+            if (!jobsById.TryGetValue(progress.JobId, out JobRowViewModel? job))
+            {
+                job = new JobRowViewModel(progress);
+                jobsById.Add(progress.JobId, job);
+                JobRows.Add(job);
+            }
+
+            if (progress.Event != PipelineProgressEvent.JobQueued)
+            {
+                job.Apply(progress);
+            }
+        }
+
+        if (JobsListView.SelectedItem is null && JobRows.Count > 0)
+        {
+            JobsListView.SelectedIndex = 0;
+        }
+
+        if (JobsListView.SelectedItem is JobRowViewModel selected)
+        {
+            CopyTraceButton.IsEnabled = selected.CanCopyTraceId;
+        }
+
+        PipelineProgressBar.Maximum = Math.Max(1, total);
+        PipelineProgressBar.Value = processed;
+        UpdateSummary();
+    }
+
+    private void ResetRunView()
+    {
+        processed = 0;
+        failed = 0;
+        total = 0;
+        jobsById.Clear();
+        JobRows.Clear();
+        DetailPanel.DataContext = null;
+        CopyTraceButton.IsEnabled = false;
+        PipelineProgressBar.Maximum = 1;
+        PipelineProgressBar.Value = 0;
+        UpdateSummary();
+    }
+
+    private void UpdateSummary()
+    {
+        double elapsedSeconds = runStopwatch.Elapsed.TotalSeconds;
+        int retries = JobRows.Sum(job => job.RetryCount);
+        double throughput = elapsedSeconds > 0 ? processed / elapsedSeconds : 0;
+
+        ProcessedSummaryTextBlock.Text = $"{processed} / {total}";
+        FailedSummaryTextBlock.Text = failed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        RetrySummaryTextBlock.Text = retries.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ElapsedSummaryTextBlock.Text = $"{elapsedSeconds:0.0} s";
+        ThroughputSummaryTextBlock.Text = $"{throughput:0.0} 件/秒";
+    }
+
+    private void SetStatus(string title, string message, InfoBarSeverity severity)
+    {
+        StatusInfoBar.Title = title;
+        StatusInfoBar.Message = message;
+        StatusInfoBar.Severity = severity;
+        StatusInfoBar.IsOpen = true;
+    }
+
+    private void SetConfigurationEnabled(bool enabled)
+    {
+        InputDirectoryTextBox.IsEnabled = enabled;
+        OutputDirectoryTextBox.IsEnabled = enabled;
+        OtelModeComboBox.IsEnabled = enabled;
+        ParallelismNumberBox.IsEnabled = enabled;
+        SlowReadCheckBox.IsEnabled = enabled;
+        AccessDeniedCheckBox.IsEnabled = enabled;
     }
 
     private void ApplyArguments()

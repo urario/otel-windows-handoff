@@ -17,6 +17,8 @@ jobs:
         run: dotnet build ./OtelWindowsHandoff.Linux.slnf --configuration Release --no-restore
       - name: Test Pipeline.Core
         run: dotnet test ./src/Pipeline.Core.Tests/Pipeline.Core.Tests.csproj --configuration Release --no-build
+      - name: Test legacy log correlation sample
+        run: dotnet test ./samples/legacy-log-correlation/LegacyLogCorrelation.Tests/LegacyLogCorrelation.Tests.csproj --configuration Release --no-build
 
   windows:
     runs-on: windows-latest
