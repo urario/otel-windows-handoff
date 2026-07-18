@@ -8,7 +8,7 @@ namespace OtelWindowsHandoff.Pipeline;
 /// 入力ファイルを load、transform、save の順に処理するジョブパイプラインです。
 /// UI から分離しているため、同じ障害注入と計装を Console、WinUI、Linux テストで共有できます。
 /// </summary>
-public sealed class PipelineRunner
+public sealed partial class PipelineRunner
 {
     private readonly ILogger<PipelineRunner> logger;
 
@@ -161,7 +161,7 @@ public sealed class PipelineRunner
         HandoffEventSource.Log.JobStarted(traceIdText, spanIdText, job.Id);
         string handoff =
             $"handoff ts={startedAt:O} pid={Environment.ProcessId} trace_id={traceIdText} job={job.Id}";
-        logger.LogInformation("{Handoff}", handoff);
+        LogHandoff(logger, handoff);
         Console.WriteLine(handoff);
 
         try
@@ -243,7 +243,7 @@ public sealed class PipelineRunner
             activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
             activity?.AddException(exception);
             PipelineInstrumentation.JobsFailed.Add(1);
-            logger.LogError(exception, "ジョブ失敗 job.id={JobId} file.name={FileName}", job.Id, job.FileName);
+            LogJobFailed(logger, exception, job.Id, job.FileName);
         }
         finally
         {
@@ -270,7 +270,7 @@ public sealed class PipelineRunner
             errorMessage);
     }
 
-    private async Task<T> ExecutePhaseAsync<T>(
+    private static async Task<T> ExecutePhaseAsync<T>(
         PipelinePhase phase,
         Job job,
         IProgress<PipelineProgress>? progress,
@@ -331,7 +331,7 @@ public sealed class PipelineRunner
     private async Task<byte[]> LoadAsync(Job job, PipelineOptions options, CancellationToken cancellationToken)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("load");
-        logger.LogInformation("フェーズ開始 phase=load job.id={JobId} file.name={FileName}", job.Id, job.FileName);
+        LogPhaseStarted(logger, "load", job.Id, job.FileName);
 
         if (options.FaultMode.HasFlag(FaultMode.SlowRead) && IsFaultTarget(job.Id, options))
         {
@@ -339,14 +339,14 @@ public sealed class PipelineRunner
         }
 
         byte[] bytes = await File.ReadAllBytesAsync(job.Path, cancellationToken);
-        logger.LogInformation("フェーズ終了 phase=load job.id={JobId} file.name={FileName}", job.Id, job.FileName);
+        LogPhaseCompleted(logger, "load", job.Id, job.FileName);
         return bytes;
     }
 
     private void Transform(Job job, byte[] bytes, PipelineOptions options)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("transform");
-        logger.LogInformation("フェーズ開始 phase=transform job.id={JobId} file.name={FileName}", job.Id, job.FileName);
+        LogPhaseStarted(logger, "transform", job.Id, job.FileName);
 
         // 固定待機では CPU 障害解析の材料にならないため、1 MiB x 4 pass で数十 ms 程度の実負荷を作る。
         // 画像ライブラリは計装の読みやすさを損なうため、依存のないバイト演算に限定する。
@@ -358,7 +358,7 @@ public sealed class PipelineRunner
             }
         }
 
-        logger.LogInformation("フェーズ終了 phase=transform job.id={JobId} file.name={FileName}", job.Id, job.FileName);
+        LogPhaseCompleted(logger, "transform", job.Id, job.FileName);
     }
 
     private async Task<bool> SaveAsync(
@@ -371,7 +371,7 @@ public sealed class PipelineRunner
         CancellationToken cancellationToken)
     {
         using Activity? activity = PipelineInstrumentation.ActivitySource.StartActivity("save");
-        logger.LogInformation("フェーズ開始 phase=save job.id={JobId} file.name={FileName}", job.Id, job.FileName);
+        LogPhaseStarted(logger, "save", job.Id, job.FileName);
 
         while (true)
         {
@@ -386,11 +386,7 @@ public sealed class PipelineRunner
                 await File.WriteAllBytesAsync(outputPath, bytes, cancellationToken);
                 activity?.SetTag("retry.count", retryState.Count);
                 jobActivity?.SetTag("retry.count", retryState.Count);
-                logger.LogInformation(
-                    "フェーズ終了 phase=save job.id={JobId} file.name={FileName} retry.count={RetryCount}",
-                    job.Id,
-                    job.FileName,
-                    retryState.Count);
+                LogSaveCompleted(logger, job.Id, job.FileName, retryState.Count);
                 return true;
             }
             catch (UnauthorizedAccessException exception) when (retryState.Count < options.MaxSaveRetries)
@@ -401,13 +397,7 @@ public sealed class PipelineRunner
                 TimeSpan delay = TimeSpan.FromMilliseconds(
                     options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retryState.Count - 1));
                 reportRetry(retryState.Count, delay, exception);
-                logger.LogWarning(
-                    exception,
-                    "save を再試行 job.id={JobId} file.name={FileName} retry.count={RetryCount} delay_ms={DelayMilliseconds}",
-                    job.Id,
-                    job.FileName,
-                    retryState.Count,
-                    delay.TotalMilliseconds);
+                LogSaveRetry(logger, exception, job.Id, job.FileName, retryState.Count, delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
             }
             catch (Exception exception)
@@ -465,6 +455,30 @@ public sealed class PipelineRunner
     {
         return jobId % options.FaultTargetEvery == 0;
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{Handoff}")]
+    private static partial void LogHandoff(ILogger logger, string handoff);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "ジョブ失敗 job.id={JobId} file.name={FileName}")]
+    private static partial void LogJobFailed(ILogger logger, Exception exception, int jobId, string fileName);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "フェーズ開始 phase={Phase} job.id={JobId} file.name={FileName}")]
+    private static partial void LogPhaseStarted(ILogger logger, string phase, int jobId, string fileName);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "フェーズ終了 phase={Phase} job.id={JobId} file.name={FileName}")]
+    private static partial void LogPhaseCompleted(ILogger logger, string phase, int jobId, string fileName);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "フェーズ終了 phase=save job.id={JobId} file.name={FileName} retry.count={RetryCount}")]
+    private static partial void LogSaveCompleted(ILogger logger, int jobId, string fileName, int retryCount);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "save を再試行 job.id={JobId} file.name={FileName} retry.count={RetryCount} delay_ms={DelayMilliseconds}")]
+    private static partial void LogSaveRetry(
+        ILogger logger,
+        Exception exception,
+        int jobId,
+        string fileName,
+        int retryCount,
+        double delayMilliseconds);
 
     private sealed record Job(int Id, string Path, string FileName, long FileSize, FaultMode InjectedFault);
 

@@ -5,7 +5,7 @@ using OtelWindowsHandoff.Pipeline;
 namespace OtelWindowsHandoff.WinUI;
 
 /// <summary>Core の進捗イベントを一行分の表示状態へ写像します。</summary>
-public sealed class JobRowViewModel : INotifyPropertyChanged
+public sealed partial class JobRowViewModel : INotifyPropertyChanged
 {
     private PipelineProgressState jobState = PipelineProgressState.Waiting;
     private PipelineProgressState loadState = PipelineProgressState.Waiting;

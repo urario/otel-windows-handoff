@@ -5,7 +5,7 @@ using OtelWindowsHandoff.Pipeline;
 namespace OtelWindowsHandoff.WinUI;
 
 /// <summary>フェーズ状態を Fluent のセマンティック Brush へ変換します。</summary>
-public sealed class PhaseStateToBrushConverter : IValueConverter
+public sealed partial class PhaseStateToBrushConverter : IValueConverter
 {
     /// <inheritdoc />
     public object Convert(object value, Type targetType, object parameter, string language)
@@ -30,7 +30,7 @@ public sealed class PhaseStateToBrushConverter : IValueConverter
 }
 
 /// <summary>フェーズ状態を Segoe Fluent Icons のグリフへ変換します。</summary>
-public sealed class PhaseStateToGlyphConverter : IValueConverter
+public sealed partial class PhaseStateToGlyphConverter : IValueConverter
 {
     /// <inheritdoc />
     public object Convert(object value, Type targetType, object parameter, string language)
@@ -54,7 +54,7 @@ public sealed class PhaseStateToGlyphConverter : IValueConverter
 }
 
 /// <summary>障害注入種別を行の識別色へ変換します。</summary>
-public sealed class FaultModeToBrushConverter : IValueConverter
+public sealed partial class FaultModeToBrushConverter : IValueConverter
 {
     /// <inheritdoc />
     public object Convert(object value, Type targetType, object parameter, string language)
