@@ -3,10 +3,10 @@
 E3 の4条件をウォームアップ1回と指定回数で測定し、CSVへ出力します。
 
 .DESCRIPTION
-off、sdk、Collector稼働中のotlpは run ごとに開始条件をローテーションします。
+off、sdk、Collector稼働中のotlpは決定的な全順列で実行順を均衡化します。
 Collector停止中のotlpだけは、Collector停止後に最後へまとめて実行します。
 Collector稼働中の条件では file exporter の増分と ProcessJob ルート Span 数を取得します。
-Collectorが未稼働ならotlpの2条件をスキップします。
+E3専用設定の health check を確認できない場合は、otlpの2条件をスキップします。
 
 .EXAMPLE
 .\scripts\Measure-E3.ps1 -Target console -Runs 5
@@ -23,7 +23,7 @@ param(
     [string]$Target = "winui",
 
     [ValidateRange(1, 1000)]
-    [int]$Runs = 5,
+    [int]$Runs = 6,
 
     [string]$InputDirectory,
 
@@ -56,6 +56,9 @@ param(
 
     [ValidateRange(1, 65535)]
     [int]$CollectorPort = 4317,
+
+    [ValidateRange(1, 65535)]
+    [int]$CollectorHealthPort = 13134,
 
     [string]$CollectorProcessName = "otelcol-contrib",
 
@@ -348,7 +351,9 @@ function Stop-ConfiguredCollector {
 function Wait-CollectorStopped {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
-        if (-not (Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorPort)) {
+        $otlpStopped = -not (Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorPort)
+        $healthStopped = -not (Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorHealthPort)
+        if ($otlpStopped -and $healthStopped) {
             return $true
         }
         Start-Sleep -Milliseconds 250
@@ -401,7 +406,11 @@ function Get-EnvironmentLines {
         "application_version=$applicationVersion",
         "collector_version=$collectorVersion",
         "collector_config_expected=collector/otelcol-e3.yaml",
-        "measurement_limitations=OS file cache and antivirus scanning are not controlled"
+        "collector_otlp_endpoint_reachable=$($collectorEndpointAvailable.ToString().ToLowerInvariant())",
+        "collector_e3_health_endpoint=$($CollectorHost):$CollectorHealthPort",
+        "collector_e3_health_reachable=$($collectorConfigVerified.ToString().ToLowerInvariant())",
+        "measurement_order=off/sdk/otlp_up use deterministic balanced permutations; full balance requires a multiple of the cycle length",
+        "measurement_limitations=OS file cache and antivirus scanning are not controlled; otlp_down is fixed last and remains confounded with late-run drift"
     )
 }
 
@@ -437,8 +446,6 @@ $jobCount = @(Get-ChildItem -LiteralPath $InputDirectory -File).Count
 if ($jobCount -eq 0) {
     throw "入力ディレクトリにファイルがありません。"
 }
-
-Get-EnvironmentLines -Executable $applicationExecutable | Set-Content -LiteralPath $environmentPath -Encoding UTF8
 
 $rows = New-Object Collections.ArrayList
 function Save-Rows {
@@ -560,7 +567,47 @@ function Invoke-ConditionRun {
         Save-Rows
 }
 
-$collectorAvailable = Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorPort
+function Get-BalancedConditionOrder {
+    param(
+        [object[]]$Conditions,
+        [int]$RunIndex
+    )
+
+    $schedule = if ($Conditions.Count -eq 3) {
+        @(
+            [int[]](0, 1, 2),
+            [int[]](0, 2, 1),
+            [int[]](1, 0, 2),
+            [int[]](1, 2, 0),
+            [int[]](2, 0, 1),
+            [int[]](2, 1, 0)
+        )
+    }
+    elseif ($Conditions.Count -eq 2) {
+        @(
+            [int[]](0, 1),
+            [int[]](1, 0)
+        )
+    }
+    else {
+        throw "均衡化順序は2条件または3条件にだけ対応します。"
+    }
+
+    $cycleIndex = ($RunIndex - 1) % $schedule.Count
+    $order = @($schedule[$cycleIndex] | ForEach-Object { $Conditions[$_] })
+    return [pscustomobject]@{
+        Order = $order
+        CyclePosition = $cycleIndex + 1
+        CycleLength = $schedule.Count
+    }
+}
+
+$collectorEndpointAvailable = Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorPort
+$collectorConfigVerified = Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorHealthPort
+$collectorAvailable = $collectorEndpointAvailable -and $collectorConfigVerified
+
+Get-EnvironmentLines -Executable $applicationExecutable | Set-Content -LiteralPath $environmentPath -Encoding UTF8
+
 $interleavedConditions = @(
     [pscustomobject]@{ Condition = "off"; OtelMode = "off" },
     [pscustomobject]@{ Condition = "sdk"; OtelMode = "sdk" }
@@ -575,21 +622,30 @@ foreach ($condition in $interleavedConditions) {
 
 $conditionCount = $interleavedConditions.Count
 for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
-    $rotationStart = ($runIndex - 1) % $conditionCount
+    $balancedOrder = Get-BalancedConditionOrder `
+        -Conditions $interleavedConditions `
+        -RunIndex $runIndex
+    $orderedConditions = @($balancedOrder.Order)
     for ($position = 0; $position -lt $conditionCount; $position++) {
-        $condition = $interleavedConditions[($rotationStart + $position) % $conditionCount]
+        $condition = $orderedConditions[$position]
         Invoke-ConditionRun `
             -Condition $condition.Condition `
             -OtelMode $condition.OtelMode `
             -RunIndex $runIndex `
-            -AdditionalNote "interleaved_position=$($position + 1)/$conditionCount"
+            -AdditionalNote "order_schedule=balanced_permutation;order_cycle=$($balancedOrder.CyclePosition)/$($balancedOrder.CycleLength);interleaved_position=$($position + 1)/$conditionCount"
     }
 }
 
 if (-not $collectorAvailable) {
-    Write-Warning "Collectorがlocalhost相当の指定エンドポイントで応答しないため、otlp_up/otlp_downをスキップします。"
-    Add-SkippedCondition -Condition "otlp_up" -Reason "collector_not_running"
-    Add-SkippedCondition -Condition "otlp_down" -Reason "collector_not_running"
+    $skipReason = if (-not $collectorEndpointAvailable) {
+        "collector_not_running"
+    }
+    else {
+        "collector_e3_config_not_verified"
+    }
+    Write-Warning "OTLP エンドポイントと E3 専用 health check の両方を確認できないため、otlp_up/otlp_downをスキップします。collector/otelcol-e3.yaml で Collector を起動してください。"
+    Add-SkippedCondition -Condition "otlp_up" -Reason $skipReason
+    Add-SkippedCondition -Condition "otlp_down" -Reason $skipReason
 }
 else {
     try {
@@ -601,13 +657,13 @@ else {
             -Condition "otlp_down" `
             -OtelMode "otlp" `
             -RunIndex 0 `
-            -AdditionalNote "order_fixed:last_after_collector_stop"
+            -AdditionalNote "order_fixed:last_after_collector_stop;late_run_drift_not_balanced"
         for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
             Invoke-ConditionRun `
                 -Condition "otlp_down" `
                 -OtelMode "otlp" `
                 -RunIndex $runIndex `
-                -AdditionalNote "order_fixed:last_after_collector_stop"
+                -AdditionalNote "order_fixed:last_after_collector_stop;late_run_drift_not_balanced"
         }
     }
     catch {

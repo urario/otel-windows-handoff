@@ -158,9 +158,9 @@ dotnet run --project .\src\App.WinUI --configuration Release
 
 画面は OS のライト/ダークテーマに追従し、Windows 11 では Mica、非対応環境では標準背景へフォールバックします。完了とエラーの要約は画面下部の通知領域に表示します。
 
-`TelemetrySession` はウィンドウの寿命で保持します。OTel モードを変更すると既存セッションを Dispose してから選択モードで再作成し、ウィンドウを閉じると最後のセッションを Dispose します。そのためパイプライン実行外の UI 操作も計装でき、`--exit-after` でもプロセス終了前に flush 行が出ます。
+`TelemetrySession` はウィンドウの寿命で保持します。OTel モードを変更すると切替操作を一時的に無効化し、UI スレッド外で既存セッションを Dispose してから選択モードで再作成します。ウィンドウを閉じると、進行中の切替完了を待って最後のセッションを Dispose します。そのためパイプライン実行外の UI 操作も計装でき、`--exit-after` でもプロセス終了前に flush 行が出ます。
 
-「UIを30秒フリーズ」は UI スレッドを意図的にブロックします。ブロック前に短い完了済み `UIFreezeRequested` Span、同名の EventSource イベント、Dump マーカー、handoff 行を同じ `trace_id` / `span_id` で記録してから `Thread.Sleep` を呼びます。Freeze ボタンはパイプライン実行中も有効なため、複数ジョブの trace ID が並ぶ状況でもフリーズ操作そのものを識別できます。
+「UIを30秒フリーズ」は UI スレッドを意図的にブロックします。ブロック前に短い完了済み `UIFreezeRequested` Span、同名の EventSource イベント、Dump マーカー、handoff 行を同じ `trace_id` / `span_id` で記録してから `Thread.Sleep` を呼びます。Freeze ボタンはパイプライン実行中でもクリックできますが、クリック後の30秒間はボタンを含む UI 全体が応答しません。これにより、複数ジョブの trace ID が並ぶ状況でもフリーズ操作そのものを識別できます。
 
 E3 の無操作実行では `--auto-run --exit-after` を併用します。完了後、テレメトリの終了処理を済ませてウィンドウを閉じます。
 

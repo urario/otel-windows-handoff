@@ -4,6 +4,10 @@ receivers:
       grpc:
         endpoint: localhost:4317
 
+extensions:
+  health_check/e3:
+    endpoint: localhost:13134
+
 processors:
   batch: {}
 
@@ -20,6 +24,7 @@ exporters:
       max_backups: 3
 
 service:
+  extensions: [health_check/e3]
   pipelines:
     traces:
       receivers: [otlp]
