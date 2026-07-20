@@ -1,7 +1,7 @@
 # ETL Inspector
 
 WPRで取得したETLを直接読み取り、既定では `OtelWindowsHandoff-Handoff` プロバイダーの
-`JobStarted` と `JobCompleted` を一覧表示する確認用CLIです。
+`JobStarted`、`JobCompleted`、`UIFreezeRequested` を一覧表示する確認用CLIです。
 WPAのフィルターや表示状態に依存せず、ETL内部のイベントとペイロードを確認できます。
 
 ## 前提
@@ -32,12 +32,15 @@ dotnet run --project .\tools\EtlInspector -- .\spike.etl --provider OtelEtwSpike
 ```text
 JobStarted    traceId=<32桁の値>;spanId=<16桁の値>;jobId=1
 JobCompleted  traceId=<32桁の値>;jobId=1
+UIFreezeRequested traceId=<32桁の値>;spanId=<16桁の値>;processId=<PID>;uiThreadId=<thread ID>;operationName=ui-freeze
 ...
 
 JobStarted=5
 JobCompleted=5
-Total=10
+UIFreezeRequested=1
+Total=11
 ```
 
 `JobStarted` は `traceId`、`spanId`、`jobId`、`JobCompleted` は
-`traceId`、`jobId` を出力します。
+`traceId`、`jobId`、`UIFreezeRequested` は `traceId`、`spanId`、`processId`、
+`uiThreadId`、`operationName` を出力します。

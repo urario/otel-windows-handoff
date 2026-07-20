@@ -44,4 +44,21 @@ public sealed class HandoffEventSource : EventSource
     {
         WriteEvent(3);
     }
+
+    /// <summary>UI フリーズ操作の相関情報を、UI スレッドをブロックする前に発行します。</summary>
+    /// <param name="traceId">32桁の16進 trace ID。</param>
+    /// <param name="spanId">16桁の16進 span ID。</param>
+    /// <param name="processId">対象プロセスの ID。</param>
+    /// <param name="uiThreadId">ブロック対象の managed thread ID。</param>
+    /// <param name="operationName">ログと共有する操作名。</param>
+    [Event(4, Level = EventLevel.Informational)]
+    public void UIFreezeRequested(
+        string traceId,
+        string spanId,
+        int processId,
+        int uiThreadId,
+        string operationName)
+    {
+        WriteEvent(4, traceId, spanId, processId, uiThreadId, operationName);
+    }
 }

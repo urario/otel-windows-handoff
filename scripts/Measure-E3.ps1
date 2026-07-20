@@ -3,9 +3,10 @@
 E3 の4条件をウォームアップ1回と指定回数で測定し、CSVへ出力します。
 
 .DESCRIPTION
-off、sdk、Collector稼働中のotlp、Collector停止中のotlpを順に実行します。
-Collector稼働中の条件では file exporter の増分から送信バイト数と
-ProcessJob Span数を取得します。Collectorが未稼働ならotlpの2条件をスキップします。
+off、sdk、Collector稼働中のotlpは run ごとに開始条件をローテーションします。
+Collector停止中のotlpだけは、Collector停止後に最後へまとめて実行します。
+Collector稼働中の条件では file exporter の増分と ProcessJob ルート Span 数を取得します。
+Collectorが未稼働ならotlpの2条件をスキップします。
 
 .EXAMPLE
 .\scripts\Measure-E3.ps1 -Target console -Runs 5
@@ -380,7 +381,13 @@ function Get-EnvironmentLines {
     $collectorVersion = "not_running"
     $collectorProcess = Get-Process -Name $CollectorProcessName -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $collectorProcess) {
-        try { $collectorVersion = $collectorProcess.MainModule.FileVersionInfo.ProductVersion } catch { $collectorVersion = "unknown" }
+        try {
+            $productVersion = $collectorProcess.MainModule.FileVersionInfo.ProductVersion
+            $collectorVersion = if ([string]::IsNullOrWhiteSpace($productVersion)) { "unknown" } else { $productVersion }
+        }
+        catch {
+            $collectorVersion = "unknown"
+        }
     }
 
     return @(
@@ -392,7 +399,9 @@ function Get-EnvironmentLines {
         "powershell=$($PSVersionTable.PSVersion)",
         "dotnet_sdk=$dotnetVersion",
         "application_version=$applicationVersion",
-        "collector_version=$collectorVersion"
+        "collector_version=$collectorVersion",
+        "collector_config_expected=collector/otelcol-e3.yaml",
+        "measurement_limitations=OS file cache and antivirus scanning are not controlled"
     )
 }
 
@@ -443,24 +452,26 @@ function Add-SkippedCondition {
         condition = $Condition
         target = $Target
         run_index = -1
-        elapsed_ms = $null
+        process_elapsed_ms = $null
+        pipeline_elapsed_ms = $null
         private_bytes_peak = $null
-        flush_ms = $null
-        sent_bytes = $null
-        dropped_count = $null
+        flush_elapsed_ms = $null
+        exporter_file_delta_bytes = $null
+        processjob_rootspan_missing = $null
         notes = "skipped:$Reason"
     })
     Save-Rows
 }
 
-function Invoke-Condition {
+function Invoke-ConditionRun {
     param(
         [string]$Condition,
-        [string]$OtelMode
+        [string]$OtelMode,
+        [int]$RunIndex,
+        [string]$AdditionalNote = ""
     )
 
-    for ($runIndex = 0; $runIndex -le $Runs; $runIndex++) {
-        $runKind = if ($runIndex -eq 0) { "warmup" } else { "run$runIndex" }
+        $runKind = if ($RunIndex -eq 0) { "warmup" } else { "run$RunIndex" }
         Write-Host "[$Condition] $runKind/$Runs"
         $runOutputDirectory = Join-Path $workDirectory "${Condition}_$runKind"
         New-Item -ItemType Directory -Force $runOutputDirectory | Out-Null
@@ -490,9 +501,21 @@ function Invoke-Condition {
             -StandardErrorPath $stderrPath
 
         $notes = New-Object Collections.Generic.List[string]
-        if ($runIndex -eq 0) { $notes.Add("warmup") }
+        if ($RunIndex -eq 0) { $notes.Add("warmup") }
+        if (-not [string]::IsNullOrWhiteSpace($AdditionalNote)) { $notes.Add($AdditionalNote) }
         if ($processResult.ExitCode -ne 0) { $notes.Add("exit_code=$($processResult.ExitCode)") }
         if (-not [string]::IsNullOrWhiteSpace($processResult.StandardError)) { $notes.Add("stderr_logged") }
+
+        $pipelineElapsedMilliseconds = $null
+        $pipelineMatches = [regex]::Matches(
+            $processResult.StandardOutput,
+            '(?m)^pipeline elapsed_ms=(\d+)\s*$')
+        if ($pipelineMatches.Count -gt 0) {
+            $pipelineElapsedMilliseconds = [long]$pipelineMatches[$pipelineMatches.Count - 1].Groups[1].Value
+        }
+        else {
+            $notes.Add("pipeline_line_missing")
+        }
 
         $flushMilliseconds = $null
         $flushMatches = [regex]::Matches(
@@ -507,52 +530,85 @@ function Invoke-Condition {
             $notes.Add("flush_line_missing")
         }
 
-        $sentBytes = $null
-        $droppedCount = $null
+        $exporterFileDeltaBytes = $null
+        $processJobRootSpanMissing = $null
         if ($Condition -eq "otlp_up") {
             Wait-ExporterStable -InitialLength $exporterLengthBefore
             $exporterDelta = Read-ExporterDelta -InitialLength $exporterLengthBefore
-            $sentBytes = $exporterDelta.ByteCount
-            $droppedCount = [Math]::Max(0, $jobCount - $exporterDelta.ProcessJobCount)
+            $exporterFileDeltaBytes = $exporterDelta.ByteCount
+            $processJobRootSpanMissing = [Math]::Max(0, $jobCount - $exporterDelta.ProcessJobCount)
             if (-not [string]::IsNullOrWhiteSpace($exporterDelta.Note)) { $notes.Add($exporterDelta.Note) }
             if ($exporterDelta.ProcessJobCount -gt $jobCount) { $notes.Add("collector_has_concurrent_input") }
         }
         elseif ($Condition -eq "otlp_down") {
-            $sentBytes = [long]0
-            $droppedCount = $jobCount
+            $exporterFileDeltaBytes = [long]0
+            $processJobRootSpanMissing = $jobCount
         }
 
         [void]$rows.Add([pscustomobject][ordered]@{
             condition = $Condition
             target = $Target
-            run_index = $runIndex
-            elapsed_ms = $processResult.ElapsedMilliseconds
+            run_index = $RunIndex
+            process_elapsed_ms = $processResult.ElapsedMilliseconds
+            pipeline_elapsed_ms = $pipelineElapsedMilliseconds
             private_bytes_peak = $processResult.PrivateBytesPeak
-            flush_ms = $flushMilliseconds
-            sent_bytes = $sentBytes
-            dropped_count = $droppedCount
+            flush_elapsed_ms = $flushMilliseconds
+            exporter_file_delta_bytes = $exporterFileDeltaBytes
+            processjob_rootspan_missing = $processJobRootSpanMissing
             notes = ($notes -join ";")
         })
         Save-Rows
+}
+
+$collectorAvailable = Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorPort
+$interleavedConditions = @(
+    [pscustomobject]@{ Condition = "off"; OtelMode = "off" },
+    [pscustomobject]@{ Condition = "sdk"; OtelMode = "sdk" }
+)
+if ($collectorAvailable) {
+    $interleavedConditions += [pscustomobject]@{ Condition = "otlp_up"; OtelMode = "otlp" }
+}
+
+foreach ($condition in $interleavedConditions) {
+    Invoke-ConditionRun -Condition $condition.Condition -OtelMode $condition.OtelMode -RunIndex 0
+}
+
+$conditionCount = $interleavedConditions.Count
+for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
+    $rotationStart = ($runIndex - 1) % $conditionCount
+    for ($position = 0; $position -lt $conditionCount; $position++) {
+        $condition = $interleavedConditions[($rotationStart + $position) % $conditionCount]
+        Invoke-ConditionRun `
+            -Condition $condition.Condition `
+            -OtelMode $condition.OtelMode `
+            -RunIndex $runIndex `
+            -AdditionalNote "interleaved_position=$($position + 1)/$conditionCount"
     }
 }
 
-Invoke-Condition -Condition "off" -OtelMode "off"
-Invoke-Condition -Condition "sdk" -OtelMode "sdk"
-
-if (-not (Test-TcpEndpoint -HostName $CollectorHost -Port $CollectorPort)) {
+if (-not $collectorAvailable) {
     Write-Warning "Collectorがlocalhost相当の指定エンドポイントで応答しないため、otlp_up/otlp_downをスキップします。"
     Add-SkippedCondition -Condition "otlp_up" -Reason "collector_not_running"
     Add-SkippedCondition -Condition "otlp_down" -Reason "collector_not_running"
 }
 else {
-    Invoke-Condition -Condition "otlp_up" -OtelMode "otlp"
     try {
         Stop-ConfiguredCollector
         if (-not (Wait-CollectorStopped)) {
             throw "Collectorの待受ポートが閉じませんでした。"
         }
-        Invoke-Condition -Condition "otlp_down" -OtelMode "otlp"
+        Invoke-ConditionRun `
+            -Condition "otlp_down" `
+            -OtelMode "otlp" `
+            -RunIndex 0 `
+            -AdditionalNote "order_fixed:last_after_collector_stop"
+        for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
+            Invoke-ConditionRun `
+                -Condition "otlp_down" `
+                -OtelMode "otlp" `
+                -RunIndex $runIndex `
+                -AdditionalNote "order_fixed:last_after_collector_stop"
+        }
     }
     catch {
         Write-Warning "Collector停止条件を実行できませんでした: $($_.Exception.Message)"

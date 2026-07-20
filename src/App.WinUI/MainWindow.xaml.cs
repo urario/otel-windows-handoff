@@ -22,6 +22,8 @@ public sealed partial class MainWindow : Window
     private readonly Stopwatch runStopwatch = new();
     private readonly DispatcherQueueTimer summaryTimer;
     private CancellationTokenSource? cancellation;
+    private TelemetrySession? telemetry;
+    private ILogger? freezeLogger;
     private bool running;
     private int processed;
     private int failed;
@@ -47,6 +49,9 @@ public sealed partial class MainWindow : Window
         summaryTimer.Tick += (_, _) => UpdateSummary();
 
         ApplyArguments();
+        ReplaceTelemetrySession(arguments.OtelMode);
+        OtelModeComboBox.SelectionChanged += OtelModeComboBox_SelectionChanged;
+        Closed += MainWindow_Closed;
         RootGrid.Loaded += RootGrid_Loaded;
     }
 
@@ -74,7 +79,20 @@ public sealed partial class MainWindow : Window
 
     private void FreezeButton_Click(object sender, RoutedEventArgs e)
     {
+        ILogger logger = freezeLogger
+            ?? throw new InvalidOperationException("TelemetrySession が初期化されていません。");
+        PipelineInstrumentation.RecordUIFreezeRequested(logger, Environment.CurrentManagedThreadId);
         Thread.Sleep(TimeSpan.FromSeconds(30));
+    }
+
+    private void OtelModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ReplaceTelemetrySession(ParseOtelMode(SelectedOtelMode()));
+    }
+
+    private void MainWindow_Closed(object sender, WindowEventArgs e)
+    {
+        DisposeTelemetrySession();
     }
 
     private void JobsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -116,7 +134,6 @@ public sealed partial class MainWindow : Window
         var progress = new ProgressBuffer<PipelineProgress>(DispatcherQueue, ApplyProgressBatch);
         try
         {
-            OtelMode otelMode = ParseOtelMode(SelectedOtelMode());
             FaultMode faultMode = FaultMode.None;
             if (SlowReadCheckBox.IsChecked == true)
             {
@@ -128,10 +145,9 @@ public sealed partial class MainWindow : Window
                 faultMode |= FaultMode.AccessDenied;
             }
 
-            using TelemetrySession telemetry = TelemetrySession.Create(
-                otelMode,
-                TimeSpan.FromMilliseconds(arguments.FlushTimeoutMilliseconds));
-            ILogger<PipelineRunner> logger = telemetry.LoggerFactory.CreateLogger<PipelineRunner>();
+            TelemetrySession currentTelemetry = telemetry
+                ?? throw new InvalidOperationException("TelemetrySession が初期化されていません。");
+            ILogger<PipelineRunner> logger = currentTelemetry.LoggerFactory.CreateLogger<PipelineRunner>();
             var runner = new PipelineRunner(logger);
             runStopwatch.Restart();
             summaryTimer.Start();
@@ -149,6 +165,7 @@ public sealed partial class MainWindow : Window
             summaryTimer.Stop();
             progress.Flush();
             UpdateSummary();
+            Console.WriteLine($"pipeline elapsed_ms={runStopwatch.ElapsedMilliseconds}");
 
             InfoBarSeverity severity = result.Failed == 0 ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
             SetStatus(
@@ -279,6 +296,22 @@ public sealed partial class MainWindow : Window
             OtelMode.Sdk => 1,
             _ => 2,
         };
+    }
+
+    private void ReplaceTelemetrySession(OtelMode mode)
+    {
+        DisposeTelemetrySession();
+        telemetry = TelemetrySession.Create(
+            mode,
+            TimeSpan.FromMilliseconds(arguments.FlushTimeoutMilliseconds));
+        freezeLogger = telemetry.LoggerFactory.CreateLogger<MainWindow>();
+    }
+
+    private void DisposeTelemetrySession()
+    {
+        freezeLogger = null;
+        telemetry?.Dispose();
+        telemetry = null;
     }
 
     private string SelectedOtelMode()
