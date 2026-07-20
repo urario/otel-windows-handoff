@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using OtelWindowsHandoff.Pipeline;
 
@@ -72,6 +73,7 @@ internal static class Program
                 $"progress processed={value.Processed}/{value.Total} failed={value.Failed} current={value.CurrentJob}");
         });
 
+        Stopwatch pipelineStopwatch = Stopwatch.StartNew();
         PipelineResult result = await runner.RunAsync(
             new PipelineOptions
             {
@@ -82,7 +84,9 @@ internal static class Program
             },
             progress,
             cancellation.Token);
+        pipelineStopwatch.Stop();
 
+        System.Console.WriteLine($"pipeline elapsed_ms={pipelineStopwatch.ElapsedMilliseconds}");
         System.Console.WriteLine(
             $"summary completed={result.Completed} failed={result.Failed} retries={result.TotalRetries}");
         return result.Failed == 0 ? 0 : 1;

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using Microsoft.Extensions.Logging.Abstractions;
 using OtelWindowsHandoff.Pipeline;
 using Xunit;
@@ -153,6 +154,53 @@ public sealed class PipelineRunnerTests
         });
     }
 
+    /// <summary>UI フリーズの Span、ETW、Dump、handoff 行が同じ相関情報を共有することを検証します。</summary>
+    [Fact]
+    public void UIFreezeHandoffCompletesSpanBeforeReturningAndSharesIdentifiers()
+    {
+        var stopped = new ConcurrentQueue<Activity>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineInstrumentation.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Enqueue,
+        };
+        ActivitySource.AddActivityListener(activityListener);
+        using var eventListener = new HandoffRecordingEventListener();
+        int uiThreadId = Environment.CurrentManagedThreadId;
+
+        UIFreezeHandoff handoff = PipelineInstrumentation.RecordUIFreezeRequested(
+            NullLogger.Instance,
+            uiThreadId);
+
+        Activity activity = Assert.Single(stopped);
+        Assert.Equal(PipelineInstrumentation.UIFreezeActivityName, activity.DisplayName);
+        Assert.Equal(handoff.TraceId, activity.TraceId.ToString());
+        Assert.Equal(handoff.SpanId, activity.SpanId.ToString());
+        Assert.Equal(PipelineInstrumentation.UIFreezeOperationName, activity.GetTagItem("operation.name"));
+        Assert.Equal(uiThreadId, activity.GetTagItem("ui.thread.id"));
+        Assert.Equal(Environment.ProcessId, activity.GetTagItem("process.id"));
+
+        object?[] payload = Assert.Single(eventListener.Events);
+        Assert.Equal(handoff.TraceId, payload[0]);
+        Assert.Equal(handoff.SpanId, payload[1]);
+        Assert.Equal(Environment.ProcessId, payload[2]);
+        Assert.Equal(uiThreadId, payload[3]);
+        Assert.Equal(PipelineInstrumentation.UIFreezeOperationName, payload[4]);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.Equal(
+            $"{HandoffDumpMarker.SearchKey} freeze trace_id={handoff.TraceId} span_id={handoff.SpanId} " +
+            $"pid={handoff.ProcessId} ui_thread={handoff.UIThreadId} ts={handoff.Timestamp:O}",
+            HandoffDumpMarker.Current.Value);
+        Assert.Equal(
+            $"handoff ts={handoff.Timestamp:O} pid={handoff.ProcessId} trace_id={handoff.TraceId} " +
+            $"span_id={handoff.SpanId} ui_thread={handoff.UIThreadId} operation={handoff.OperationName}",
+            handoff.HandoffLine);
+    }
+
     /// <summary>進捗通知が待機から失敗までの全状態と、実際の ProcessJob Span の ID を共有することを検証します。</summary>
     /// <returns>非同期テストの完了を表すタスク。</returns>
     [Fact]
@@ -288,6 +336,27 @@ public sealed class PipelineRunnerTests
         public void Report(T value)
         {
             report(value);
+        }
+    }
+
+    private sealed class HandoffRecordingEventListener : EventListener
+    {
+        public ConcurrentQueue<object?[]> Events { get; } = new();
+
+        protected override void OnEventSourceCreated(EventSource eventSource)
+        {
+            if (eventSource.Name == "OtelWindowsHandoff-Handoff")
+            {
+                EnableEvents(eventSource, EventLevel.Informational);
+            }
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+        {
+            if (eventData.EventId == 4)
+            {
+                Events.Enqueue(eventData.Payload?.ToArray() ?? []);
+            }
         }
     }
 }

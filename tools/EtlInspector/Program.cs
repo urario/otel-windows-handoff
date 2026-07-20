@@ -19,6 +19,7 @@ if (!File.Exists(etlPath))
 using var source = new ETWTraceEventSource(etlPath);
 int startedCount = 0;
 int completedCount = 0;
+int uiFreezeRequestedCount = 0;
 
 source.Dynamic.All += data =>
 {
@@ -35,6 +36,9 @@ source.Dynamic.All += data =>
         case "JobCompleted":
             completedCount++;
             break;
+        case "UIFreezeRequested":
+            uiFreezeRequestedCount++;
+            break;
         default:
             return;
     }
@@ -49,5 +53,6 @@ source.Process();
 Console.WriteLine();
 Console.WriteLine($"JobStarted={startedCount}");
 Console.WriteLine($"JobCompleted={completedCount}");
-Console.WriteLine($"Total={startedCount + completedCount}");
+Console.WriteLine($"UIFreezeRequested={uiFreezeRequestedCount}");
+Console.WriteLine($"Total={startedCount + completedCount + uiFreezeRequestedCount}");
 return 0;

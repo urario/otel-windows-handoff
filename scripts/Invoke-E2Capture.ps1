@@ -64,6 +64,20 @@ function Get-ToolVersion {
     }
 }
 
+function Show-WprStatus {
+    param($WprCommand)
+
+    Write-Host "既存の WPR 記録状態を確認します。"
+    $statusOutput = @(& $WprCommand.Source -status 2>&1)
+    $statusExitCode = $LASTEXITCODE
+    foreach ($line in $statusOutput) {
+        Write-Host $line
+    }
+    if ($statusExitCode -ne 0) {
+        Write-Warning "wpr -status の取得に失敗しました。開始処理は続行しますが、失敗時は他の記録セッションとの競合を確認してください。"
+    }
+}
+
 $operationCount = @($Start.IsPresent, (-not [string]::IsNullOrWhiteSpace($Stop)), $Hang.IsPresent) |
     Where-Object { $_ } |
     Measure-Object |
@@ -88,9 +102,18 @@ if ($Start) {
 
     $wpr = Get-RequiredTool -Name "wpr.exe" -InstallHint "Windows Performance Toolkitをインストールしてください。"
     Write-Host "WPR version=$(Get-ToolVersion $wpr)"
+    Show-WprStatus -WprCommand $wpr
     & $wpr.Source -start $Profile -filemode
     if ($LASTEXITCODE -ne 0) {
-        throw "WPR記録を開始できませんでした。"
+        throw @"
+WPR記録を開始できませんでした。カーネルロガーを使う別の記録、または残留した WPR セッションと競合している可能性があります。
+復旧手順:
+  1. wpr -status で実行中の記録を確認する。
+  2. 他の利用者やツールが開始した記録なら、その所有者側で停止する。
+  3. この実験で残ったセッションだと確認できた場合だけ wpr -cancel を実行する。
+  4. 再度 .\scripts\Invoke-E2Capture.ps1 -Start を実行する。
+他の記録を無断で wpr -cancel しないでください。
+"@
     }
     Write-Host "WPR記録を開始しました。ここで初めて、別のPowerShellからアプリを起動してください。"
     exit 0

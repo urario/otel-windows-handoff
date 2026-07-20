@@ -1,10 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <WindowsPerformanceRecorder Version="1.0">
   <Profiles>
+    <SystemCollector Id="HandoffSystemCollector" Name="OTel Handoff Kernel Collector">
+      <BufferSize Value="1024" />
+      <Buffers Value="64" />
+    </SystemCollector>
+
     <EventCollector Id="HandoffEventCollector" Name="OTel Handoff Event Collector">
       <BufferSize Value="64" />
       <Buffers Value="4" />
     </EventCollector>
+
+    <SystemProvider Id="HandoffSystemProvider">
+      <Keywords>
+        <Keyword Value="ProcessThread" />
+        <Keyword Value="CSwitch" />
+        <Keyword Value="ReadyThread" />
+        <Keyword Value="SampledProfile" />
+      </Keywords>
+      <Stacks>
+        <Stack Value="CSwitch" />
+        <Stack Value="ReadyThread" />
+      </Stacks>
+    </SystemProvider>
 
     <EventProvider
       Id="HandoffProvider"
@@ -12,12 +30,15 @@
       Level="5" />
 
     <Profile
-      Id="OtelWindowsHandoff.Light.File"
-      Name="OtelWindowsHandoff"
-      Description="OpenTelemetry と ETW の引き継ぎイベントを記録する"
+      Id="OtelWindowsHandoffWait.Verbose.File"
+      Name="OtelWindowsHandoffWait"
+      Description="OpenTelemetry 引き継ぎイベントと Wait 解析用カーネルイベントを記録する"
       LoggingMode="File"
-      DetailLevel="Light">
+      DetailLevel="Verbose">
       <Collectors>
+        <SystemCollectorId Value="HandoffSystemCollector">
+          <SystemProviderId Value="HandoffSystemProvider" />
+        </SystemCollectorId>
         <EventCollectorId Value="HandoffEventCollector">
           <EventProviders>
             <EventProviderId Value="HandoffProvider" />

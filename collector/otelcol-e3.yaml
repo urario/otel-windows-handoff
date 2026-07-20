@@ -1,0 +1,40 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: localhost:4317
+
+extensions:
+  health_check/e3:
+    endpoint: localhost:13134
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/aspire:
+    endpoint: localhost:4318
+    tls:
+      insecure: true
+  file:
+    path: artifacts/otel/telemetry.json
+    rotation:
+      max_megabytes: 100
+      max_days: 7
+      max_backups: 3
+
+service:
+  extensions: [health_check/e3]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/aspire, file]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/aspire, file]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/aspire, file]
